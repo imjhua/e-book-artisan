@@ -41,6 +41,175 @@
   --color-line: #D9D2CA;
 }
 
+/**
+ * Print Styles Management
+ * 프린트 프리뷰 + 실제 프린트 스타일을 한곳에서 관리
+ * 
+ * [data-print-preview="true"]: JavaScript isPrintMode로 설정되는 프린트 프리뷰 모드
+ * @media print: 실제 인쇄시 적용되는 스타일
+ */
+
+/* ===== 1. Print Preview Mode (isPrintMode 상태) ===== */
+[data-print-preview="true"] {
+  --color-paper: #FFFFFF;
+  --color-ink: #1A1A1A;
+  --color-line: #D1CEC8;
+  --color-canvas: #FFFFFF;
+  --color-accent: #1A1A1A;
+}
+
+[data-print-preview="true"] * {
+  animation: none !important;
+  transition: none !important;
+  box-shadow: none !important;
+  opacity: 1 !important;
+}
+
+/* 모든 색상을 불투명한 값으로 강제 */
+[data-print-preview="true"] [style*="color"] {
+  opacity: 1 !important;
+}
+
+[data-print-preview="true"] [style*="background"] {
+  opacity: 1 !important;
+}
+
+/* Tailwind 색상 클래스 무시하고 CSS 변수 사용 */
+[data-print-preview="true"] [class*="text-accent"] {
+  color: var(--color-accent) !important;
+  opacity: 1 !important;
+}
+
+[data-print-preview="true"] [class*="text-ink"] {
+  color: var(--color-ink) !important;
+  opacity: 1 !important;
+}
+
+[data-print-preview="true"] [class*="text-line"] {
+  color: var(--color-line) !important;
+  opacity: 1 !important;
+}
+
+[data-print-preview="true"] [class*="bg-"] {
+  opacity: 1 !important;
+}
+
+/* 테두리도 불투명 */
+[data-print-preview="true"] [class*="border"] {
+  opacity: 1 !important;
+}
+
+/* 그림자/효과 제거 */
+[data-print-preview="true"] .shadow-2xl,
+[data-print-preview="true"] .shadow-lg,
+[data-print-preview="true"] .shadow-sm,
+[data-print-preview="true"] .shadow {
+  box-shadow: none !important;
+}
+
+/* Print 유틸리티 클래스 활성화 */
+[data-print-preview="true"] .print\:block {
+  display: block !important;
+}
+
+[data-print-preview="true"] .print\:hidden {
+  display: none !important;
+}
+
+[data-print-preview="true"] .print\:overflow-visible {
+  overflow: visible !important;
+}
+
+[data-print-preview="true"] .print\:shadow-none {
+  box-shadow: none !important;
+}
+
+[data-print-preview="true"] .print\:border-0 {
+  border-width: 0 !important;
+}
+
+[data-print-preview="true"] svg {
+  print-color-adjust: exact !important;
+  -webkit-print-color-adjust: exact !important;
+}
+
+/* ===== 2. Actual Print (@media print) ===== */
+@media print {
+  /* 폰트 CSS 변수 재선언 */
+  :root {
+    --font-sans: "Inter", "Gothic A1", ui-sans-serif, system-ui, sans-serif;
+    --font-serif: "Nanum Myeongjo", "Cormorant Garamond", serif;
+    --font-display: "Playfair Display", serif;
+    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  }
+
+  /* 페이지 설정 */
+  html, body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    background: white;
+  }
+
+  /* UI 요소 모두 숨김 */
+  header,
+  aside,
+  [class*="sidebar"],
+  [class*="panel"],
+  .floating-controls,
+  button,
+  .sync-status {
+    display: none !important;
+  }
+
+  /* 메인 콘텐츠 영역 */
+  main {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 0 !important;
+    overflow: visible !important;
+    background: white;
+    padding: 0 !important;
+    margin: 0;
+    width: 100%;
+  }
+
+  /* 페이지 컨테이너 */
+  main > div {
+    page-break-after: always;
+  }
+
+  main > div:last-child {
+    page-break-after: avoid;
+  }
+
+  /* 애니메이션 및 전환 제거 */
+  * {
+    animation: none !important;
+    transition: none !important;
+    opacity: 1 !important;
+  }
+
+  /* 그림자 제거 */
+  * {
+    box-shadow: none !important;
+  }
+
+  /* SVG 재단선 색상 보존 */
+  svg,
+  svg line,
+  svg rect {
+    print-color-adjust: exact !important;
+    -webkit-print-color-adjust: exact !important;
+  }
+
+  /* 테두리 스타일 조정 */
+  [class*="border"] {
+    border-color: #e5e5e5 !important;
+  }
+}
+
 @layer utilities {
   .no-scrollbar::-webkit-scrollbar {
     display: none;
@@ -48,6 +217,10 @@
   .no-scrollbar {
     -ms-overflow-style: none;
     scrollbar-width: none;
+  }
+  /* 드롭캡: 판형별 크기 대응을 위해 CSS 변수 사용 */
+  .drop-cap::first-letter {
+    font-size: var(--drop-cap-size, 36px);
   }
 }
 
@@ -60,6 +233,49 @@
  * - Crop Mark: A5 경계선 (마젠타)
  */
 @media print {
+  /* 폰트 명시적 선언 (프린트 시에도 동일 폰트 사용) */
+  * {
+    print-color-adjust: exact !important;
+    -webkit-print-color-adjust: exact !important;
+  }
+
+  /* Tailwind v4 CSS 변수 강제 재선언 */
+  :root {
+    --font-sans: "Inter", "Gothic A1", ui-sans-serif, system-ui, sans-serif !important;
+    --font-serif: "Nanum Myeongjo", "Cormorant Garamond", serif !important;
+    --font-display: "Playfair Display", serif !important;
+    --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace !important;
+  }
+
+  .font-serif, [class*="font-serif"] {
+    font-family: "Nanum Myeongjo", "Cormorant Garamond", serif !important;
+  }
+
+  .font-sans, [class*="font-sans"] {
+    font-family: "Inter", "Gothic A1", ui-sans-serif, system-ui, sans-serif !important;
+  }
+
+  .font-display, [class*="font-display"] {
+    font-family: "Playfair Display", serif !important;
+  }
+
+  .font-mono, [class*="font-mono"] {
+    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace !important;
+  }
+
+  /* 페이지 콘텐츠 영역 전체에 기본 폰트 강제 */
+  [class*="bg-paper"] {
+    font-family: var(--font-serif) !important;
+  }
+
+  [class*="bg-paper"] [class*="font-sans"] {
+    font-family: "Inter", "Gothic A1", ui-sans-serif, system-ui, sans-serif !important;
+  }
+
+  [class*="bg-paper"] [class*="font-mono"] {
+    font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace !important;
+  }
+
   /* 페이지 레이아웃 */
   html, body {
     width: 100%;

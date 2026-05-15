@@ -7,7 +7,8 @@
 export { GAS_URL } from './api';
 
 // Scale Configuration
-export { MM_TO_PX } from './scale';
+export { MM_TO_PX, CONTENT_SCALE, getContentSizes } from './scale';
+export type { ContentSizes } from './scale';
 
 // UI Configuration
 export { UI_DEFAULTS, SYNC_STATUSES, type SyncStatus } from './ui';
