@@ -1,0 +1,53 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Cormorant+Garamond:wght@300;400;500;600&family=Nanum+Myeongjo:wght@400;700;800&family=Playfair+Display:wght@400;700&family=Gothic+A1:wght@300;400;500;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", "Gothic A1", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Nanum Myeongjo", "Cormorant Garamond", serif;
+  --font-display: "Playfair Display", serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-paper: #FDFCFB;
+  --color-ink: #1A1A1A;
+  --color-line: #D1CEC8;
+  --color-canvas: #F4F1ED;
+  --color-accent: #8C8882;
+}
+
+@layer base {
+  body {
+    @apply bg-canvas text-ink font-sans transition-colors duration-300;
+  }
+}
+
+.theme-classic {
+  --color-paper: #FDFCFB;
+  --color-ink: #1A1A1A;
+}
+
+.theme-modern {
+  --color-paper: #FFFFFF;
+  --color-ink: #0D0D0D;
+}
+
+.theme-academic {
+  --color-paper: #FDFDFD;
+  --color-ink: #2C3E50;
+}
+
+.theme-zen {
+  --color-paper: #F7F3F0;
+  --color-ink: #3D4035;
+  --color-line: #D9D2CA;
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+

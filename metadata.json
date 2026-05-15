@@ -1,0 +1,6 @@
+{
+  "name": "E-Book Artisan",
+  "description": "Professional e-book design and creation tool with standard formats and binding margins.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
