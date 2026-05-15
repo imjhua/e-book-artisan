@@ -17,50 +17,63 @@ import {
   ZoomOut,
   Maximize2,
   Flower2,
-  Upload,
-  AlertCircle
+  AlertCircle,
+  PanelLeft,
+  PanelRight
 } from 'lucide-react';
 import { BOOK_STANDARDS, BookStandard, PageData, PageType, PageData as IPageData, BookTheme, BookProject } from './types.ts';
 import { useEbookSheet } from './hooks/useEbookSheet';
-
-const MM_TO_PX = 3.5; // Visual scale factor
-
-const DEFAULT_PAGE: IPageData = {
-  id: '1',
-  type: 'cover',
-  title: '빈야사 플로우: 새벽의 요가',
-  subtitle: '팝송과 움직임의 완벽한 조화',
-  author: '요가 안내자',
-  content: '',
-};
+import { GAS_URL, MM_TO_PX, UI_DEFAULTS, PRINT_BINDING_SPECS, type SyncStatus } from './constants';
 
 export default function App() {
-  const gasWebAppUrl = import.meta.env.VITE_GAS_WEB_APP_URL || '';
-  const { load, savePage, updatePage, deletePage, saveMetadata, loading, error } = useEbookSheet(gasWebAppUrl);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [spreadMode, setSpreadMode] = useState(true);
-  const [zoom, setZoom] = useState(0.7);
-  const [syncStatus, setSyncStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const { load, savePage, updatePage, deletePage, saveMetadata, syncAll, loading, error } = useEbookSheet(GAS_URL);
+  const [currentIndex, setCurrentIndex] = useState(UI_DEFAULTS.currentIndex);
+  const [spreadMode, setSpreadMode] = useState(UI_DEFAULTS.spreadMode);
+  const [zoom, setZoom] = useState(UI_DEFAULTS.zoom.default);
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>(UI_DEFAULTS.syncStatus);
   const [syncMessage, setSyncMessage] = useState('');
+  const [showLeftSidebar, setShowLeftSidebar] = useState(UI_DEFAULTS.showLeftSidebar);
+  const [showRightPanel, setShowRightPanel] = useState(UI_DEFAULTS.showRightPanel);
+  const [isPrintMode, setIsPrintMode] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
-  // Initialize with default project
-  const [project, setProject] = useState<BookProject>({
-    title: '빈야사 플로우: 새벽의 요가',
-    theme: 'classic',
-    standard: 'A5',
-    bindingMargin: 5,
-    pages: [{
-      id: Math.random().toString(36).substr(2, 9),
-      type: 'cover',
-      title: '빈야사 플로우: 새벽의 요가',
-      subtitle: '팝송과 움직임의 완벽한 조화',
-      author: '요가 안내자',
-      content: '',
-    }],
-  });
+  // Initialize with empty project - wait for Google Sheets load
+  const [project, setProject] = useState<BookProject | null>(null);
 
-  const currentPage = project.pages[currentIndex];
-  const standardInfo = BOOK_STANDARDS[project.standard];
+  const currentPage = project?.pages[currentIndex];
+  const standardInfo = project ? BOOK_STANDARDS[project.standard] : null;
+
+  // 앱 시작 시 자동으로 Google Sheets에서 데이터 로드
+  useEffect(() => {
+    const autoLoad = async () => {
+      try {
+        const loadedProject = await load();
+        setProject(loadedProject);
+        setCurrentIndex(0);
+        console.log('✅ Google Sheets 데이터 로드 성공:', loadedProject);
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : '알 수 없는 에러';
+        console.error('❌ Google Sheets 데이터 로드 실패:', errorMsg);
+      }
+    };
+    autoLoad();
+  }, [load]);
+
+  // 프린트 이벤트 리스너 - 사이드바 복구 보장
+  useEffect(() => {
+    const handleBeforePrint = () => setIsPrintMode(true);
+    const handleAfterPrint = () => setIsPrintMode(false);
+
+    window.addEventListener('beforeprint', handleBeforePrint);
+    window.addEventListener('afterprint', handleAfterPrint);
+
+    return () => {
+      window.removeEventListener('beforeprint', handleBeforePrint);
+      window.removeEventListener('afterprint', handleAfterPrint);
+    };
+  }, []);
 
   // Helper to add a new page
   const addPage = (type: PageType = 'body') => {
@@ -68,7 +81,7 @@ export default function App() {
       id: Math.random().toString(36).substr(2, 9),
       type,
       title: '',
-      chapterTitle: type === 'chapter' ? `CHAPTER ${project.pages.filter(p => p.type === 'chapter').length + 1}` : '',
+      chapterTitle: '',
       content: '',
     };
     const nextPages = [...project.pages];
@@ -105,57 +118,45 @@ export default function App() {
     else if (currentIndex === newIndex) setCurrentIndex(index);
   };
 
-  // Load from Google Sheets
-  const handleLoadFromSheets = async () => {
-    try {
-      setSyncStatus('loading');
-      setSyncMessage('Google Sheets에서 불러오는 중...');
-      const loadedProject = await load();
-      setProject(loadedProject);
-      setCurrentIndex(0);
-      setSyncStatus('success');
-      setSyncMessage('Google Sheets에서 로드 완료!');
-      setTimeout(() => setSyncStatus('idle'), 3000);
-    } catch (err) {
-      setSyncStatus('error');
-      setSyncMessage(err instanceof Error ? err.message : 'Load failed');
-      setTimeout(() => setSyncStatus('idle'), 3000);
+  const reorderPages = (fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex) return;
+    const nextPages = [...project.pages];
+    const [movedPage] = nextPages.splice(fromIndex, 1);
+    nextPages.splice(toIndex, 0, movedPage);
+    setProject({ ...project, pages: nextPages });
+    if (currentIndex === fromIndex) setCurrentIndex(toIndex);
+    else if (currentIndex >= Math.min(fromIndex, toIndex) && currentIndex <= Math.max(fromIndex, toIndex)) {
+      setCurrentIndex(currentIndex + (fromIndex > toIndex ? 1 : -1));
     }
   };
 
   // Save to Google Sheets
   const handleSaveToSheets = async () => {
     try {
+      setIsSaving(true);
       setSyncStatus('loading');
-      setSyncMessage('Google Sheets에 저장 중...');
+      setSyncMessage('저장 중...');
       
-      // Save metadata
-      await saveMetadata({
-        title: project.title,
-        theme: project.theme,
-        standard: project.standard,
-        bindingMargin: project.bindingMargin,
-      });
-
-      // Save all pages
-      for (const page of project.pages) {
-        await savePage(page);
-      }
+      // 전체 동기화 (기존 데이터 삭제 후 새로 작성)
+      await syncAll(project);
 
       setSyncStatus('success');
-      setSyncMessage('Google Sheets에 저장 완료!');
+      setSyncMessage('저장 완료!');
       setTimeout(() => setSyncStatus('idle'), 3000);
     } catch (err) {
       setSyncStatus('error');
       setSyncMessage(err instanceof Error ? err.message : 'Save failed');
       setTimeout(() => setSyncStatus('idle'), 3000);
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  // Preview dimensions
-  const previewWidth = standardInfo.width * MM_TO_PX;
-  const previewHeight = standardInfo.height * MM_TO_PX;
-  const marginPx = project.bindingMargin * MM_TO_PX;
+  // Preview dimensions (use A5 default if standardInfo is null)
+  const defaultStandardInfo = standardInfo || BOOK_STANDARDS['A5'];
+  const previewWidth = defaultStandardInfo.width * MM_TO_PX;
+  const previewHeight = defaultStandardInfo.height * MM_TO_PX;
+  const marginPx = project?.bindingMargin ? project.bindingMargin * MM_TO_PX : 0;
 
   // New logic: index 0 (p1) is Left, index 1 (p2) is Right.
   const isLeftPage = currentIndex % 2 === 0; 
@@ -171,41 +172,123 @@ export default function App() {
     return '';
   };
 
+  // 프린트 핸들러: 선택한 표준에 맞춰 페이지 크기 동적 설정
+  const handlePrint = () => {
+    if (!project) return;
+
+    // 선택된 표준 정보 가져오기
+    const standard = BOOK_STANDARDS[project.standard];
+    const width = standard.width;
+    const height = standard.height;
+
+    // 기존 프린트 스타일이 있으면 제거
+    const existingStyle = document.getElementById('print-page-size');
+    if (existingStyle) {
+      existingStyle.remove();
+    }
+
+    // 새로운 프린트 스타일 생성 - PRINT_BINDING_SPECS 적용
+    const style = document.createElement('style');
+    style.id = 'print-page-size';
+    style.textContent = `
+      @page {
+        size: ${width}mm ${height}mm;
+        margin: 0;
+      }
+      
+      @media print {
+        /* 페이지 설정 */
+        body, html {
+          margin: 0;
+          padding: 0;
+          background: white;
+        }
+
+        /* UI 요소 숨기기 */
+        header, aside, [class*="sidebar"], [class*="panel"], .floating-controls, button {
+          display: none !important;
+        }
+
+        /* 메인 영역 */
+        main {
+          display: flex !important;
+          flex-direction: column !important;
+          gap: 0 !important;
+          overflow: visible !important;
+          background: white;
+          padding: 0 !important;
+          margin: 0;
+        }
+
+        /* 페이지 컨테이너 */
+        [style*="pageBreakAfter"] {
+          page-break-after: always;
+        }
+
+        /* 재단선(Crop Mark) 표시 */
+        svg line, svg rect {
+          print-color-adjust: exact !important;
+          -webkit-print-color-adjust: exact !important;
+        }
+
+        /* 애니메이션 제거 */
+        * {
+          animation: none !important;
+          transition: none !important;
+        }
+
+        /* 그림자 제거 */
+        * {
+          box-shadow: none !important;
+        }
+      }
+    `;
+    document.head.appendChild(style);
+
+    // 프린트 대화 열기
+    window.print();
+  };
+
   return (
-    <div className="flex h-screen bg-canvas overflow-hidden font-sans">
-      {/* Sidebar: Navigation & Controls */}
-      <aside className="w-80 bg-white border-r border-line flex flex-col z-10 transition-all duration-300">
-        <div className="p-6 border-b border-line/50">
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="text-[10px] uppercase tracking-[0.2em] text-accent font-bold mb-2 block">Standard</label>
-                <select 
-                  value={project.standard}
-                  onChange={(e) => setProject({ ...project, standard: e.target.value as BookStandard })}
-                  className="w-full px-3 py-2 bg-canvas/30 border-b border-line text-sm focus:outline-none cursor-pointer hover:border-ink transition-colors"
-                >
-                  {Object.keys(BOOK_STANDARDS).map((s) => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="text-[10px] uppercase tracking-[0.2em] text-accent font-bold mb-2 block">Binding Gutter</label>
-                <div className="flex items-center gap-2">
-                  <input 
-                    type="number"
-                    value={project.bindingMargin}
-                    onChange={(e) => setProject({ ...project, bindingMargin: Number(e.target.value) })}
-                    className="w-full px-3 py-2 bg-canvas/30 border-b border-line text-sm focus:outline-none hover:border-ink transition-colors"
-                  />
-                  <span className="text-[10px] text-accent">mm</span>
-                </div>
-              </div>
+    <>
+      {error ? (
+        <div className="flex h-screen w-screen items-center justify-center bg-canvas">
+          <div className="text-center max-w-2xl">
+            <div className="mb-6 flex justify-center">
+              <AlertCircle className="w-16 h-16 text-red-500" />
             </div>
+            <h2 className="text-xl font-bold text-ink mb-3">데이터 로드 실패</h2>
+            <div className="text-sm text-accent mb-6 bg-red-50 p-6 rounded-sm border border-red-200 text-left whitespace-pre-wrap font-mono">
+              {error}
+            </div>
+            <button 
+              onClick={() => window.location.reload()}
+              className="px-6 py-2 bg-ink text-white rounded-sm text-sm font-bold hover:bg-neutral-800 transition-colors"
+            >
+              다시 시도
+            </button>
           </div>
         </div>
-
+      ) : !project ? (
+        <div className="flex h-screen w-screen items-center justify-center bg-canvas">
+          <div className="text-center">
+            <div className="mb-4 flex justify-center">
+              <div className="h-8 w-8 animate-spin rounded-full border-4 border-line border-t-ink"></div>
+            </div>
+            <p className="text-sm text-accent font-medium">데이터를 로드하는 중...</p>
+          </div>
+        </div>
+      ) : (
+      <div className="flex h-screen bg-canvas overflow-hidden font-sans relative">
+      {/* 저장 중 투명 오버레이 */}
+      {isSaving && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-white/40 backdrop-blur-[1px]">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-line border-t-ink"></div>
+        </div>
+      )}
+      {/* Sidebar: Navigation & Controls */}
+      {showLeftSidebar && !isPrintMode && (
+      <aside className="w-80 bg-white border-r border-line flex flex-col z-10 transition-all duration-300">
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
           <div className="flex items-center justify-between px-2 mb-4">
             <span className="text-[10px] uppercase tracking-[0.2em] text-accent font-bold">Document Structure</span>
@@ -216,19 +299,26 @@ export default function App() {
               <Plus className="w-4 h-4 text-accent group-hover:text-ink" />
             </button>
           </div>
-          {project.pages.map((page, idx) => (
+          {(project.pages || []).filter(Boolean).map((page, idx) => (
             <div
               key={page.id}
+              draggable
+              onDragStart={() => setDragIndex(idx)}
+              onDragOver={(e) => { e.preventDefault(); setDragOverIndex(idx); }}
+              onDrop={() => { if (dragIndex !== null) reorderPages(dragIndex, idx); setDragIndex(null); setDragOverIndex(null); }}
+              onDragEnd={() => { setDragIndex(null); setDragOverIndex(null); }}
               onClick={() => setCurrentIndex(idx)}
-              className={`w-full flex items-center gap-3 p-3 rounded-sm text-left transition-all group border cursor-pointer ${
+              className={`w-full flex items-center gap-3 p-3 rounded-sm text-left transition-all group border cursor-grab active:cursor-grabbing ${
                 idx === currentIndex ? 'bg-ink text-white border-ink shadow-lg' : 'hover:bg-neutral-50 text-ink border-transparent hover:border-line'
-              }`}
+              } ${dragIndex === idx ? 'opacity-40' : ''} ${dragOverIndex === idx && dragIndex !== idx ? 'border-t-2 !border-t-ink' : ''}`}
             >
               <span className={`text-[10px] font-mono w-4 ${idx === currentIndex ? 'text-accent' : 'text-line'}`}>
                 {(idx + 1).toString().padStart(2, '0')}
               </span>
               <div className="flex-1 truncate">
-                <p className="text-xs font-semibold truncate uppercase tracking-tight">{page.title || (page.type === 'cover' ? 'Book Cover' : 'Untitled')}</p>
+              <span className="text-xs font-semibold truncate uppercase tracking-tight">
+                {page.type === 'chapter' ? (page.chapterTitle || '(제목없음)') : page.type === 'body' ? '(제목없음)' : (page.title || '(제목없음)')}
+              </span>
                 <p className={`text-[9px] uppercase tracking-[0.15em] font-medium ${idx === currentIndex ? 'text-accent' : 'text-accent/60'}`}>
                   {page.type}
                 </p>
@@ -258,7 +348,7 @@ export default function App() {
                   className="p-0.5 rounded hover:bg-neutral-200 transition-all"
                 >
                   <Trash2 
-                    className={`w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity ${
+                    className={`w-5 h-5 opacity-0 group-hover:opacity-100 transition-opacity ${
                       idx === currentIndex ? 'text-accent hover:text-white' : 'text-accent hover:text-red-500'
                     }`}
                   />
@@ -273,16 +363,30 @@ export default function App() {
               <span className="text-[10px] uppercase font-bold text-accent tracking-widest">Chapters / Pages</span>
               <span className="text-xs font-mono font-bold text-ink">{project.pages.length}</span>
             </div>
-           <button className="w-full bg-ink text-white py-3 rounded-sm flex items-center justify-center gap-3 text-[11px] uppercase tracking-[0.2em] font-bold hover:bg-neutral-800 transition-all shadow-sm">
+           <button 
+             onClick={handlePrint}
+             className="w-full bg-ink text-white py-3 rounded-sm flex items-center justify-center gap-3 text-[11px] uppercase tracking-[0.2em] font-bold hover:bg-neutral-800 transition-all shadow-sm"
+             title={`${project.standard} 크기로 프린트 (${standardInfo?.width}mm × ${standardInfo?.height}mm)`}
+           >
              <Download className="w-3.5 h-3.5" />
              Print Preview
            </button>
         </div>
       </aside>
+      )}
 
       {/* Main Preview Area */}
       <main className="flex-1 relative flex flex-col overflow-hidden bg-canvas">
         <header className="h-16 border-b border-line bg-white flex items-center justify-between px-8 z-10 shrink-0 gap-4">
+          <div className="flex items-center gap-4">
+            <button 
+              onClick={() => setShowLeftSidebar(!showLeftSidebar)}
+              className="p-2 hover:bg-canvas rounded transition-colors text-accent hover:text-ink"
+              title="Toggle Left Sidebar"
+            >
+              <PanelLeft className="w-4 h-4" />
+            </button>
+          </div>
           <div className="flex items-center gap-8 flex-1 overflow-hidden">
              <nav className="flex items-center gap-6 overflow-x-auto no-scrollbar whitespace-nowrap">
                 {[
@@ -290,8 +394,8 @@ export default function App() {
                   { type: 'toc' as PageType, label: '목차' },
                   { type: 'chapter' as PageType, label: '챕터' },
                   { type: 'sequence' as PageType, label: '시퀀스' },
-                  { type: 'header-body' as PageType, label: '제목/본문' },
                   { type: 'body' as PageType, label: '본문' },
+                  { type: 'header-body' as PageType, label: '제목/본문' },
                   { type: 'quote' as PageType, label: '인용구' },
                 ].map((item) => (
                   <button
@@ -313,106 +417,121 @@ export default function App() {
             <div className="flex items-center gap-2">
             <button 
               disabled={currentIndex === 0}
-              onClick={() => setCurrentIndex(currentIndex - 1)}
+              onClick={() => setCurrentIndex(spreadMode ? Math.max(0, currentIndex - 2) : currentIndex - 1)}
               className="p-2 border border-line rounded-sm hover:bg-canvas disabled:opacity-30 transition-colors"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
             <span className="text-[10px] font-mono font-bold text-accent px-4 border-x border-line">
-              {currentIndex + 1} / {project.pages.length}
+              {spreadMode 
+                ? `${Math.floor(currentIndex / 2) + 1} / ${Math.ceil(project.pages.length / 2)}`
+                : `${currentIndex + 1} / ${project.pages.length}`
+              }
             </span>
             <button 
-              disabled={currentIndex === project.pages.length - 1}
-              onClick={() => setCurrentIndex(currentIndex + 1)}
+              disabled={spreadMode ? currentIndex >= project.pages.length - 1 : currentIndex === project.pages.length - 1}
+              onClick={() => setCurrentIndex(spreadMode ? Math.min(project.pages.length - 1, currentIndex + 2) : currentIndex + 1)}
               className="p-2 border border-line rounded-sm hover:bg-canvas disabled:opacity-30 transition-colors"
             >
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>
+          <button 
+            onClick={() => setShowRightPanel(!showRightPanel)}
+            className="p-2 hover:bg-canvas rounded transition-colors text-accent hover:text-ink"
+            title="Toggle Right Panel"
+          >
+            <PanelRight className="w-4 h-4" />
+          </button>
         </div>
       </header>
 
         <div className="flex-1 flex items-center justify-center p-16 overflow-auto relative">
-          <AnimatePresence mode="wait">
-            <motion.div 
-              key={spreadMode ? `spread-${currentIndex}-${zoom}` : `${currentPage.id}-${zoom}`}
-              initial={{ opacity: 0, scale: zoom * 0.98 }}
-              animate={{ opacity: 1, scale: zoom }}
-              exit={{ opacity: 0, scale: zoom * 1.02 }}
-              transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-              style={{ transformOrigin: 'center center' }}
-              className="flex items-center gap-0"
-            >
-              {/* If spread mode is on, we figure out which pages to show */}
-              {spreadMode ? (
-                <div 
-                  className="flex items-center gap-0 bg-line/10 border border-line/20 rounded shadow-2xl overflow-hidden"
-                  style={{ width: previewWidth * 2 }}
-                >
-                  {(() => {
-                    const leftIdx = Math.floor(currentIndex / 2) * 2;
-                    const rightIdx = leftIdx + 1;
-                    
-                    return (
-                      <>
-                        <SinglePage 
-                          page={project.pages[leftIdx]} 
-                          index={leftIdx}
-                          isLeft={true}
-                          width={previewWidth}
-                          height={previewHeight}
-                          bindingMargin={project.bindingMargin}
-                          theme={project.theme}
-                          chapterTitle={getChapterTitle(leftIdx)}
-                        />
-                        {rightIdx < project.pages.length ? (
+          {isPrintMode ? (
+            // 프린트 모드: 모든 페이지를 연속으로 렌더링
+            <div className="w-full flex flex-col gap-0">
+              {project.pages.map((page, idx) => (
+                <div key={page.id} className="flex w-full" style={{ pageBreakAfter: 'always' }}>
+                  <SinglePage 
+                    page={page} 
+                    index={idx}
+                    isLeft={idx % 2 === 0}
+                    width={previewWidth}
+                    height={previewHeight}
+                    theme={project.theme}
+                    chapterTitle={getChapterTitle(idx)}
+                  />
+                </div>
+              ))}
+            </div>
+          ) : (
+            // 일반 모드: 현재 페이지/스프레드만 표시
+            <AnimatePresence mode="wait">
+              <motion.div 
+                key={spreadMode ? `spread-${currentIndex}-${zoom}` : `${currentPage.id}-${zoom}`}
+                initial={{ opacity: 0, scale: zoom * 0.98 }}
+                animate={{ opacity: 1, scale: zoom }}
+                exit={{ opacity: 0, scale: zoom * 1.02 }}
+                transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+                style={{ transformOrigin: 'center center' }}
+                className="flex items-center gap-0"
+              >
+                {/* If spread mode is on, we figure out which pages to show */}
+                {spreadMode ? (
+                  <div 
+                    className="flex items-center gap-0 bg-line/10 border border-line/20 rounded shadow-2xl overflow-hidden"
+                    style={{ width: previewWidth * 2 }}
+                  >
+                    {(() => {
+                      const leftIdx = Math.floor(currentIndex / 2) * 2;
+                      const rightIdx = leftIdx + 1;
+                      
+                      return (
+                        <>
                           <SinglePage 
-                            page={project.pages[rightIdx]} 
-                            index={rightIdx}
-                            isLeft={false}
+                            page={project.pages[leftIdx]} 
+                            index={leftIdx}
+                            isLeft={true}
                             width={previewWidth}
                             height={previewHeight}
-                            bindingMargin={project.bindingMargin}
                             theme={project.theme}
-                            chapterTitle={getChapterTitle(rightIdx)}
+                            chapterTitle={getChapterTitle(leftIdx)}
                           />
-                        ) : (
-                          // Placeholder for empty right page in spread
-                          <div 
-                            style={{ 
-                              width: previewWidth, 
-                              height: previewHeight,
-                            }}
-                            className="bg-canvas border-l border-line/20 relative"
-                          >
-                            <div className="absolute inset-0 flex items-center justify-center">
-                                <div className="text-[9px] uppercase tracking-widest text-accent font-bold opacity-20">Blank Page</div>
-                            </div>
-                          </div>
-                        )}
-                      </>
-                    );
-                  })()}
-                </div>
-              ) : (
-                <SinglePage 
-                  page={currentPage} 
-                  index={currentIndex}
-                  isLeft={isLeftPage}
-                  width={previewWidth}
-                  height={previewHeight}
-                  bindingMargin={project.bindingMargin}
-                  theme={project.theme}
-                  chapterTitle={getChapterTitle(currentIndex)}
-                />
-              )}
-            </motion.div>
-          </AnimatePresence>
+                          {rightIdx < project.pages.length ? (
+                            <SinglePage 
+                              page={project.pages[rightIdx]} 
+                              index={rightIdx}
+                              isLeft={false}
+                              width={previewWidth}
+                              height={previewHeight}
+                              theme={project.theme}
+                              chapterTitle={getChapterTitle(rightIdx)}
+                            />
+                          ) : null}
+                        </>
+                      );
+                    })()}
+                  </div>
+                ) : (
+                  <SinglePage 
+                    page={currentPage} 
+                    index={currentIndex}
+                    isLeft={isLeftPage}
+                    width={previewWidth}
+                    height={previewHeight}
+                    theme={project.theme}
+                    chapterTitle={getChapterTitle(currentIndex)}
+                  />
+                )}
+              </motion.div>
+            </AnimatePresence>
+          )}
 
           {/* Floating Zoom Controls */}
+          {!isPrintMode && (
           <div className="absolute bottom-10 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-md border border-line rounded-full px-4 py-2 flex items-center gap-4 shadow-xl z-20 transition-all hover:bg-white">
              <button 
-              onClick={() => setZoom(Math.max(0.25, zoom - 0.1))}
+              onClick={() => setZoom(Math.max(UI_DEFAULTS.zoom.min, zoom - UI_DEFAULTS.zoom.step))}
               className="p-1.5 hover:bg-canvas rounded-full transition-colors text-accent hover:text-ink"
               title="Zoom Out"
              >
@@ -422,7 +541,7 @@ export default function App() {
                 {Math.round(zoom * 100)}%
              </div>
              <button 
-              onClick={() => setZoom(Math.min(3, zoom + 0.1))}
+              onClick={() => setZoom(Math.min(UI_DEFAULTS.zoom.max, zoom + UI_DEFAULTS.zoom.step))}
               className="p-1.5 hover:bg-canvas rounded-full transition-colors text-accent hover:text-ink"
               title="Zoom In"
              >
@@ -437,10 +556,12 @@ export default function App() {
                 <Maximize2 className="w-4 h-4" />
              </button>
           </div>
+          )}
         </div>
       </main>
 
       {/* Editor Panel (Right Side) */}
+      {showRightPanel && !isPrintMode && (
       <aside className="w-80 bg-white border-l border-line p-6 z-10 flex flex-col gap-8 overflow-y-auto">
         <div>
           <h2 className="text-[10px] uppercase tracking-[0.2em] font-bold text-accent mb-6">Document Specs</h2>
@@ -494,7 +615,6 @@ export default function App() {
                        value={currentPage.title || ''}
                        onChange={(e) => updateCurrentPage({ title: e.target.value })}
                        className="w-full bg-canvas/30 p-3 border-b border-line focus:border-ink outline-none text-sm transition-all"
-                       placeholder="책 제목을 입력하세요"
                      />
                    </div>
                    <div className="flex flex-col gap-2">
@@ -504,7 +624,6 @@ export default function App() {
                        value={currentPage.subtitle || ''}
                        onChange={(e) => updateCurrentPage({ subtitle: e.target.value })}
                        className="w-full bg-canvas/30 p-3 border-b border-line focus:border-ink outline-none text-sm transition-all"
-                       placeholder="서브타이틀 또는 설명"
                      />
                    </div>
                    <div className="flex flex-col gap-2">
@@ -514,7 +633,6 @@ export default function App() {
                        value={currentPage.author || ''}
                        onChange={(e) => updateCurrentPage({ author: e.target.value })}
                        className="w-full bg-canvas/30 p-3 border-b border-line focus:border-ink outline-none text-sm transition-all"
-                       placeholder="저자 이름"
                      />
                    </div>
                  </>
@@ -614,8 +732,7 @@ export default function App() {
                        value={currentPage.chapterTitle || ''}
                        onChange={(e) => updateCurrentPage({ chapterTitle: e.target.value })}
                        className="w-full bg-canvas/30 p-3 border-b border-line focus:border-ink outline-none text-sm transition-all"
-                       placeholder="CHAPTER 01"
-                     />
+                       />
                    </div>
                    <div className="flex flex-col gap-2">
                      <label className="text-[10px] uppercase tracking-widest text-accent font-bold">챕터 서브타이틀</label>
@@ -624,7 +741,6 @@ export default function App() {
                        value={currentPage.chapterSubtitle || ''}
                        onChange={(e) => updateCurrentPage({ chapterSubtitle: e.target.value })}
                        className="w-full bg-canvas/30 p-3 border-b border-line focus:border-ink outline-none text-sm transition-all"
-                       placeholder="챕터의 부제를 입력하세요"
                      />
                    </div>
                  </>
@@ -638,7 +754,6 @@ export default function App() {
                      value={currentPage.title || ''}
                      onChange={(e) => updateCurrentPage({ title: e.target.value })}
                      className="w-full bg-canvas/30 p-3 border-b border-line focus:border-ink outline-none text-sm transition-all"
-                     placeholder="제목을 입력하세요"
                    />
                  </div>
                )}
@@ -650,7 +765,6 @@ export default function App() {
                      value={currentPage.content || ''}
                      onChange={(e) => updateCurrentPage({ content: e.target.value })}
                      className="w-full h-80 p-3 bg-canvas/30 border border-line rounded-sm text-sm leading-[1.8] focus:bg-white focus:border-ink transition-all resize-none outline-none"
-                     placeholder={currentPage.type === 'sequence' ? "가사 동작\n예: Hold my heart 우르드바하스타" : "내용을 입력하세요..."}
                    />
                  </div>
                )}
@@ -673,26 +787,19 @@ export default function App() {
 
           <button 
             onClick={handleSaveToSheets}
-            disabled={loading || !gasWebAppUrl}
+            disabled={loading || !GAS_URL}
             className="w-full border border-line text-ink py-3 rounded-sm text-[10px] uppercase tracking-widest font-bold hover:bg-ink hover:text-white transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-            title={!gasWebAppUrl ? "VITE_GAS_WEB_APP_URL not configured" : ""}
+            title={!GAS_URL ? "VITE_GAS_WEB_APP_URL not configured" : ""}
           >
             <Save className="w-3.5 h-3.5 mr-2 inline" />
             {loading ? 'Saving...' : 'Save to Sheets'}
           </button>
-
-          <button 
-            onClick={handleLoadFromSheets}
-            disabled={loading || !gasWebAppUrl}
-            className="w-full border border-line text-ink py-3 rounded-sm text-[10px] uppercase tracking-widest font-bold hover:bg-ink hover:text-white transition-all shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-            title={!gasWebAppUrl ? "VITE_GAS_WEB_APP_URL not configured" : ""}
-          >
-            <Upload className="w-3.5 h-3.5 mr-2 inline" />
-            {loading ? 'Loading...' : 'Load from Sheets'}
-          </button>
         </div>
       </aside>
-    </div>
+      )}
+      </div>
+      )}
+    </>
   );
 }
 
@@ -702,7 +809,6 @@ function SinglePage({
   isLeft, 
   width, 
   height, 
-  bindingMargin,
   theme,
   chapterTitle
 }: { 
@@ -711,53 +817,154 @@ function SinglePage({
   isLeft: boolean; 
   width: number; 
   height: number; 
-  bindingMargin: number;
   theme: BookTheme;
   chapterTitle: string;
 }) {
-  const marginPx = bindingMargin * MM_TO_PX;
-  const paddingLeft = !isLeft ? `${marginPx + 24}px` : '24px';
-  const paddingRight = isLeft ? `${marginPx + 24}px` : '24px';
+  // 크기 계산
+  const bleedPx = PRINT_BINDING_SPECS.bleed * MM_TO_PX;
+  const safeMarginPx = PRINT_BINDING_SPECS.safeMargin * MM_TO_PX;
+  const spineMarginPx = PRINT_BINDING_SPECS.spine * MM_TO_PX;
+  
+  // 전체 크기 = A5 + BLEED (출혈선 여유)
+  const totalWidth = width + bleedPx * 2;
+  const totalHeight = height + bleedPx * 2;
+  
+  // 외부 패딩: BLEED만 적용 (스파인은 내부에서 처리)
+  const paddingTop = `${bleedPx}px`;
+  const paddingBottom = `${bleedPx}px`;
+  const paddingLeft = `${bleedPx}px`;
+  const paddingRight = `${bleedPx}px`;
  
   return (
     <div 
       style={{ 
-        width, 
-        height,
+        width: totalWidth,
+        height: totalHeight,
         paddingLeft,
         paddingRight,
+        paddingTop,
+        paddingBottom,
       }}
-      className={`bg-paper shadow-[0_35px_60px_-15px_rgba(0,0,0,0.1)] relative flex flex-col group overflow-hidden border border-line/40 shrink-0 theme-${theme}`}
+      className={`bg-paper relative flex flex-col group overflow-hidden shrink-0 theme-${theme} print:shadow-none print:border-0 print:overflow-visible`}
     >
-      {/* Visual Guide: Binding Edge (gradient + labels) */}
-      <div 
-        className={`absolute top-0 bottom-0 w-10 pointer-events-none z-10 flex items-center justify-center overflow-hidden transition-all duration-500 opacity-0 group-hover:opacity-100 ${
-          isLeft 
-            ? 'right-0 bg-blue-500/5 border-l border-dashed border-blue-400/20' 
-            : 'left-0 bg-blue-500/5 border-r border-dashed border-blue-400/20'
-        }`} 
-      >
-          <span className={`text-[8px] font-bold tracking-tighter text-blue-400/50 whitespace-nowrap ${isLeft ? '-rotate-90' : 'rotate-90'}`}>
-            BINDING GUTTER {bindingMargin}mm
-          </span>
+      {/* 스크린에서만 보이는 그림자와 테두리 */}
+      <div className="absolute inset-0 pointer-events-none shadow-[0_35px_60px_-15px_rgba(0,0,0,0.1)] border border-line/40 print:shadow-none print:border-0" />
+      
+      {/* Crop Marks - 재단선 (프린트할 때만 표시) */}
+      <div className="print:block hidden absolute pointer-events-none z-10 w-full h-full">
+        <CropMark contentWidth={width} contentHeight={height} bleedPx={bleedPx} />
       </div>
       
-      <PageContent page={page} theme={theme} chapterTitle={chapterTitle} />
+      {/* 콘텐츠 컨테이너: Spine + Content를 수평으로 배치 */}
+      <div className="flex-1 relative flex flex-col h-full">
+        {/* Spine 영역과 Content를 flex로 배치 */}
+        <div className={`flex flex-1 ${isLeft ? 'flex-row-reverse' : 'flex-row'}`}>
+          {/* Spine Margin Area */}
+          <div 
+            className="flex-shrink-0 pointer-events-none print:hidden bg-blue-500/5 flex items-center justify-center border-blue-400/20"
+            style={{
+              width: `${spineMarginPx}px`,
+              borderLeft: !isLeft ? `1px dashed rgba(96, 165, 250, 0.2)` : 'none',
+              borderRight: isLeft ? `1px dashed rgba(96, 165, 250, 0.2)` : 'none',
+            }}
+          >
+            <span className={`text-[8px] font-bold tracking-tighter text-blue-400/50 whitespace-nowrap ${isLeft ? 'rotate-90' : '-rotate-90'}`}>
+              SPINE {PRINT_BINDING_SPECS.spine}mm
+            </span>
+          </div>
+
+          {/* Content Area */}
+          <div 
+            className="flex-1 relative flex flex-col overflow-hidden"
+            style={{
+              paddingLeft: `${safeMarginPx}px`,
+              paddingRight: `${safeMarginPx}px`,
+              paddingTop: `${safeMarginPx}px`,
+              paddingBottom: `${safeMarginPx}px`,
+            }}
+          >
+            <PageContent page={page} theme={theme} chapterTitle={chapterTitle} />
+          </div>
+        </div>
+      </div>
  
-      <div className={`absolute bottom-8 text-[9px] font-mono font-bold text-accent/50 ${isLeft ? 'left-12' : 'right-12'}`}>
+      {/* 페이지 번호 - 프린트할 때만 표시 */}
+      <div className={`absolute bottom-8 text-[9px] font-mono font-bold text-accent/50 print:text-ink/30 ${isLeft ? 'left-12' : 'right-12'} print:bottom-4`}>
         {index + 1}
       </div>
     </div>
   );
 }
- 
+
+/**
+ * Crop Mark Component - 재단선 (BLEED와 콘텐츠 영역의 경계)
+ */
+function CropMark({ contentWidth, contentHeight, bleedPx }: { contentWidth: number; contentHeight: number; bleedPx: number }) {
+  const strokeWidth = PRINT_BINDING_SPECS.cropMark.strokeWidth;
+  const color = PRINT_BINDING_SPECS.cropMark.color;
+  const markLength = 15; // 각도 마크의 길이 (px)
+  
+  return (
+    <svg 
+      className="absolute pointer-events-none"
+      style={{
+        left: 0,
+        top: 0,
+        width: contentWidth + bleedPx * 2,
+        height: contentHeight + bleedPx * 2,
+      }}
+      viewBox={`0 0 ${contentWidth + bleedPx * 2} ${contentHeight + bleedPx * 2}`}
+      preserveAspectRatio="none"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      {/* A5 경계선 - CROP MARK */}
+      <rect 
+        x={bleedPx} 
+        y={bleedPx} 
+        width={contentWidth} 
+        height={contentHeight} 
+        fill="none" 
+        stroke={color} 
+        strokeWidth={strokeWidth}
+        opacity="0.8"
+      />
+      
+      {/* 모서리 마크 */}
+      {/* 좌상단 */}
+      <line x1={bleedPx - markLength} y1={bleedPx} x2={bleedPx} y2={bleedPx} stroke={color} strokeWidth={strokeWidth} opacity="0.6" />
+      <line x1={bleedPx} y1={bleedPx - markLength} x2={bleedPx} y2={bleedPx} stroke={color} strokeWidth={strokeWidth} opacity="0.6" />
+      
+      {/* 우상단 */}
+      <line x1={bleedPx + contentWidth} y1={bleedPx - markLength} x2={bleedPx + contentWidth} y2={bleedPx} stroke={color} strokeWidth={strokeWidth} opacity="0.6" />
+      <line x1={bleedPx + contentWidth + markLength} y1={bleedPx} x2={bleedPx + contentWidth} y2={bleedPx} stroke={color} strokeWidth={strokeWidth} opacity="0.6" />
+      
+      {/* 좌하단 */}
+      <line x1={bleedPx - markLength} y1={bleedPx + contentHeight} x2={bleedPx} y2={bleedPx + contentHeight} stroke={color} strokeWidth={strokeWidth} opacity="0.6" />
+      <line x1={bleedPx} y1={bleedPx + contentHeight + markLength} x2={bleedPx} y2={bleedPx + contentHeight} stroke={color} strokeWidth={strokeWidth} opacity="0.6" />
+      
+      {/* 우하단 */}
+      <line x1={bleedPx + contentWidth + markLength} y1={bleedPx + contentHeight} x2={bleedPx + contentWidth} y2={bleedPx + contentHeight} stroke={color} strokeWidth={strokeWidth} opacity="0.6" />
+      <line x1={bleedPx + contentWidth} y1={bleedPx + contentHeight + markLength} x2={bleedPx + contentWidth} y2={bleedPx + contentHeight} stroke={color} strokeWidth={strokeWidth} opacity="0.6" />
+    </svg>
+  );
+}
+
 function PageContent({ page, theme, chapterTitle }: { page: IPageData, theme: BookTheme, chapterTitle: string }) {
   const titleFont = theme === 'classic' ? 'font-serif' : theme === 'modern' ? 'font-sans font-black tracking-tighter' : theme === 'zen' ? 'font-serif tracking-tight' : 'font-sans font-bold';
   const bodyFont = theme === 'classic' ? 'font-serif' : theme === 'modern' ? 'font-sans' : theme === 'zen' ? 'font-serif' : 'font-serif leading-relaxed';
  
   // Running Header Helper
   const RunningHeader = () => {
-    if (page.type === 'cover' || page.type === 'chapter') return null;
+    if (page.type === 'cover' || page.type === 'chapter' || page.type === 'body' || page.type === 'quote') return null;
+    
+    // Sequence와 Header-Body는 제목만 표시 (chapterTitle 미표시)
+    if (page.type === 'sequence' || page.type === 'header-body') {
+      return (
+        <div className="flex items-center gap-4 py-1.5 border-b border-line/20 mb-10 text-[8px] uppercase tracking-[0.15em] font-bold text-accent/50">
+           <span className="truncate max-w-[180px] text-left">{page.title || ''}</span>
+        </div>
+      );
+    }
     
     return (
       <div className="flex items-center gap-4 py-1.5 border-b border-line/20 mb-10 text-[8px] uppercase tracking-[0.15em] font-bold text-accent/50">
@@ -780,14 +987,14 @@ function PageContent({ page, theme, chapterTitle }: { page: IPageData, theme: Bo
                const lyric = parts.join(' ');
                
                return (
-                 <div key={i} className="flex items-end gap-6 group">
-                   <div className="flex-1 border-b border-line/5 pb-2 flex items-baseline">
+                 <div key={i} className="flex items-center gap-6 group">
+                   <div className="flex-1 border-b border-line/5 flex items-center">
                      <p className={`text-[13px] leading-relaxed ${bodyFont} ${theme === 'zen' ? 'text-accent' : 'text-ink/80'}`}>
                        {lyric}
                      </p>
                      <div className="flex-1 ml-4 border-b border-dotted border-line/10" />
                    </div>
-                   <div className="w-32 text-right">
+                   <div className="w-32 text-right flex items-center justify-end">
                      <p className={`text-[11px] font-bold uppercase tracking-widest ${titleFont} text-ink/90`}>
                        {pose}
                      </p>
@@ -803,16 +1010,16 @@ function PageContent({ page, theme, chapterTitle }: { page: IPageData, theme: Bo
         <div className="flex-1 flex flex-col items-center justify-center text-center px-12 py-24 relative overflow-hidden h-full">
            <div className={`w-16 h-[2px] bg-line/20 mb-12 ${theme === 'modern' ? 'bg-ink w-24 h-[4px]' : ''}`} />
            <h1 className={`text-4xl font-bold tracking-tight leading-[1.1] mb-6 whitespace-pre-wrap ${titleFont} ${theme === 'modern' ? 'text-6xl uppercase' : 'text-ink'}`}>
-             {page.title || 'Your Book Title'}
+             {page.title}
            </h1>
            <div className="w-8 h-[1px] bg-line/30 mb-6" />
            <p className={`text-[11px] tracking-[0.3em] uppercase mb-20 max-w-[80%] mx-auto leading-relaxed ${theme === 'modern' ? 'font-sans font-black text-ink bg-ink text-white px-4 py-1' : 'font-sans text-accent'}`}>
-             {page.subtitle || 'A subtitle or short description'}
+             {page.subtitle}
            </p>
            <div className="mt-auto pt-12 flex flex-col items-center">
              <span className="text-[10px] uppercase tracking-[0.4em] text-accent/40 mb-3 font-bold">Author</span>
              <p className={`text-sm tracking-[0.05em] ${theme === 'modern' ? 'font-sans font-bold uppercase underline underline-offset-4' : 'font-serif text-ink'}`}>
-               {page.author || 'Author Name'}
+               {page.author}
              </p>
            </div>
         </div>
@@ -827,22 +1034,20 @@ function PageContent({ page, theme, chapterTitle }: { page: IPageData, theme: Bo
               <div className="w-12 h-[1px] bg-ink mt-4" />
             </div>
             <div className="space-y-8">
-              {(page.tocEntries && page.tocEntries.length > 0) ? page.tocEntries.map((entry, i) => (
-                <div key={i} className="flex flex-col gap-1 group cursor-default">
-                  <div className="flex items-baseline justify-between mb-1">
-                    <span className="text-[9px] font-mono text-accent/60 tracking-widest uppercase">{entry.chapter}</span>
-                    <span className="text-[10px] font-mono text-accent/30 tracking-widest uppercase">P.{entry.pageNumber || String(i + 1).padStart(2, '0')}</span>
+              {(page.tocEntries && page.tocEntries.length > 0) ? (
+                page.tocEntries.map((entry, i) => (
+                  <div key={i} className="flex flex-col gap-1 group cursor-default">
+                    <div className="flex items-baseline justify-between mb-1">
+                      <span className="text-[9px] font-mono text-accent/60 tracking-widest uppercase">{entry.chapter}</span>
+                      <span className="text-[10px] font-mono text-accent/30 tracking-widest uppercase">P.{entry.pageNumber || String(i + 1).padStart(2, '0')}</span>
+                    </div>
+                    <div className="flex items-baseline gap-3 group">
+                      <span className={`text-[13px] font-medium group-hover:text-ink transition-colors uppercase tracking-[0.12em] text-ink/90 ${bodyFont}`}>{entry.title}</span>
+                      <div className="flex-1 border-b border-line/10" />
+                    </div>
                   </div>
-                  <div className="flex items-baseline gap-3 group">
-                    <span className={`text-[13px] font-medium group-hover:text-ink transition-colors uppercase tracking-[0.12em] text-ink/90 ${bodyFont}`}>{entry.title || 'Untitled Section'}</span>
-                    <div className="flex-1 border-b border-line/10" />
-                  </div>
-                </div>
-              )) : (
-                <div className="py-24 text-center border border-dashed border-line/20 rounded">
-                  <p className="text-[10px] uppercase tracking-[0.3em] text-accent/30 font-bold">Contents is currently empty</p>
-                </div>
-              )}
+                ))
+              ) : null}
             </div>
           </div>
         </div>
@@ -852,10 +1057,10 @@ function PageContent({ page, theme, chapterTitle }: { page: IPageData, theme: Bo
         <div className="flex-1 flex flex-col items-center justify-center p-16 text-center h-full relative">
            <div className="mb-12">
              <span className="text-[11px] font-mono text-accent/50 tracking-[0.5em] uppercase block mb-6">Part</span>
-             <h2 className={`text-5xl font-bold mb-8 text-ink ${titleFont}`}>{page.chapterTitle || 'Chapter 01'}</h2>
+             <h2 className={`text-5xl font-bold mb-8 text-ink ${titleFont}`}>{page.chapterTitle}</h2>
            </div>
            <h3 className={`text-xl italic text-accent tracking-tighter leading-normal max-w-[80%] mx-auto ${bodyFont}`}>
-            {page.chapterSubtitle || 'Chapter Subtitle'}
+            {page.chapterSubtitle}
            </h3>
            {theme === 'modern' && (
              <div className="w-24 h-[6px] bg-ink mt-12" />
@@ -867,7 +1072,7 @@ function PageContent({ page, theme, chapterTitle }: { page: IPageData, theme: Bo
         <div className="flex-1 px-12 py-12 flex flex-col h-full">
           <RunningHeader />
           <p className={`text-[14px] leading-relaxed text-ink/80 whitespace-pre-wrap flex-1 ${bodyFont}`}>
-            {page.content || '본문 내용을 입력하세요.'}
+            {page.content}
           </p>
         </div>
       );
@@ -876,7 +1081,7 @@ function PageContent({ page, theme, chapterTitle }: { page: IPageData, theme: Bo
         <div className="flex-1 px-16 py-20 flex flex-col items-center justify-center text-center h-full">
            <RunningHeader />
            <div className={`text-3xl font-serif italic text-ink/90 leading-[1.6] max-w-[90%] font-light ${titleFont}`}>
-             “{page.content || '인용할 내용을 입력하세요.'}”
+             "{page.content}"
            </div>
         </div>
       );
@@ -887,7 +1092,7 @@ function PageContent({ page, theme, chapterTitle }: { page: IPageData, theme: Bo
            <RunningHeader />
            <div className="flex-1">
              <p className={`text-[14px] leading-relaxed text-ink/80 whitespace-pre-wrap first-letter:text-4xl first-letter:float-left first-letter:mr-3 first-letter:font-serif first-letter:text-ink ${bodyFont}`}>
-               {page.content || '본문 내용을 입력하세요.'}
+               {page.content}
              </p>
            </div>
         </div>

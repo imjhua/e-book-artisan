@@ -4,6 +4,7 @@
 
 - [앱스크립트](https://script.google.com/u/0/home/projects/14OwbxGTXvHiPCrjmN4DAPNQvkOYT26eLUghYHaZz80rWyHjjiNFeAbok/edit)
 - [구글드라이브](https://docs.google.com/spreadsheets/d/1gwvXdXGV8IEjQ5q82Fo9gEusW8k9ZVXVzQ6R_4iex24)
+- **웹 앱 URL**: `https://script.google.com/macros/s/AKfycbzuKJeAilzBvMxixy4DK4vxnhxinpbAlQhRMsmym5WpCDMUhClmvdjzodGTwXPDXXVr/exec`
 
 ## 🤔 GAS(Google Apps Script)가 뭐래?
 
@@ -97,17 +98,26 @@
 
 ---
 
-### **4️⃣ .env.local 생성**
+### **4️⃣ GAS URL 설정**
 
-프로젝트 루트에 파일 생성:
+프로젝트 루트의 `src/hooks/useEbookSheet.ts` 파일을 열어서 다음을 찾습니다:
 
-```bash
-# 파일명: .env.local
-
-VITE_GAS_WEB_APP_URL="https://script.google.com/macros/d/YOUR_SCRIPT_ID/usercache_XXXXX/do"
+```typescript
+export function useEbookSheet(gasWebAppUrl: string) {
 ```
 
-**STEP 3에서 복사한 URL 붙여넣기**
+이 함수가 사용하는 URL이 위의 웹 앱 URL입니다.
+또는 `src/App.tsx`에서 다음 부분을 찾아서:
+
+```typescript
+const gasWebAppUrl = import.meta.env.VITE_GAS_WEB_APP_URL || '';
+```
+
+이를 직접 설정하고 싶으면:
+
+```typescript
+const gasWebAppUrl = 'https://script.google.com/macros/s/AKfycbzuKJeAilzBvMxixy4DK4vxnhxinpbAlQhRMsmym5WpCDMUhClmvdjzodGTwXPDXXVr/exec';
+```
 
 ---
 
@@ -123,40 +133,26 @@ npm run dev
 
 ## ✅ 테스트해보기
 
-### **Test 1: Google Sheets에서 로드**
+### **Test 1: 앱 실행 시 자동 로드**
 
-1. Google Sheet을 열어서 `Body` 시트 2행에 테스트 데이터 입력:
+1. `npm run dev` 실행
+2. `http://localhost:3000` 접속
+3. 앱이 자동으로 Google Sheets에서 데이터 로드 ✅
+4. 로드된 데이터가 화면에 표시됨
 
-   ```
-   A2: row-2
-   B2: 테스트 페이지
-   C2: 로드 테스트 콘텐츠
-   ```
+### **Test 2: 앱에서 데이터 수정 후 저장**
 
-2. e-book-artisan 앱 열기
+1. 앱에서 제목이나 내용 수정
+2. 하단 **`Save to Sheets`** 버튼 클릭
+3. 성공 메시지 표시됨
+4. Google Sheets 열어서 변경사항 확인 ✅
 
-3. 하단 **`Load from Sheets`** 버튼 클릭
-
-4. **성공**: 앱에 새 페이지가 나타남 ✅
-
-### **Test 2: 앱에서 Google Sheets에 저장**
+### **Test 3: 새 페이지 추가 후 저장**
 
 1. 앱에서 새 페이지 추가 (좌측 사이드바 `+` 버튼)
-
 2. 제목/내용 입력
-
-3. 하단 **`Save to Sheets`** 버튼 클릭
-
-4. Google Sheets 열어서 해당 PageType 시트 확인
-
-5. **성공**: 새 행이 추가됨 ✅
-
-### **Test 3: 앱 새로고침 후 데이터 유지**
-
-1. 앱에서 페이지 추가 후 저장
-2. 앱 새로고침 (F5)
-3. **`Load from Sheets`** 클릭
-4. **성공**: 저장했던 페이지가 다시 로드됨 ✅
+3. **`Save to Sheets`** 버튼 클릭
+4. Google Sheets 열어서 해당 PageType 시트에 새 행 확인 ✅
 
 ---
 
@@ -164,8 +160,8 @@ npm run dev
 
 ### **"Save to Sheets" 버튼이 비활성화됨**
 
-- ❌ `.env.local` 파일이 없음
-- ✅ 해결: `.env.local` 파일 생성 후 `VITE_GAS_WEB_APP_URL` 추가
+- ❌ GAS URL이 설정되지 않음
+- ✅ 해결: `src/App.tsx`에서 `gasWebAppUrl` 확인 및 URL 설정
 
 ### **"Unauthorized" 에러**
 

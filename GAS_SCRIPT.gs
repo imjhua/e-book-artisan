@@ -18,17 +18,21 @@ const PAGE_TYPE_SHEETS = {
   'toc': 'TOC',
   'chapter': 'Chapter',
   'sequence': 'Sequence',
-  'body': 'Body',
   'header-body': 'Header-Body',
+  'body': 'Body',
   'quote': 'Quote'
 };
 
 function doGet(e) {
   try {
     const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const sheets = {};
     
-    // Load Metadata (1행 only)
-    const metadataSheet = ss.getSheetByName(SHEET_NAMES.metadata);
+    // 모든 시트를 한 번에 가져오기
+    ss.getSheets().forEach(s => { sheets[s.getName()] = s; });
+    
+    // Load Metadata
+    const metadataSheet = sheets[SHEET_NAMES.metadata];
     const metadataRow = metadataSheet.getRange(2, 1, 1, 4).getValues()[0];
     const metadata = {
       title: metadataRow[0] || '',
@@ -37,23 +41,41 @@ function doGet(e) {
       bindingMargin: metadataRow[3] || 5
     };
 
+    // Load PageOrder 정보
+    const pageOrderMap = {};
+    const pageOrderSheet = sheets['PageOrder'];
+    if (pageOrderSheet && pageOrderSheet.getLastRow() > 1) {
+      const orderData = pageOrderSheet.getRange(2, 1, pageOrderSheet.getLastRow() - 1, 3).getValues();
+      for (let i = 0; i < orderData.length; i++) {
+        if (orderData[i][0]) {
+          pageOrderMap[orderData[i][0]] = orderData[i][2] !== '' ? orderData[i][2] : i;
+        }
+      }
+    }
+
     // Load all pages from each PageType sheet
-    const pages = [];
+    let pages = [];
     
     Object.entries(PAGE_TYPE_SHEETS).forEach(([pageType, sheetName]) => {
-      const sheet = ss.getSheetByName(sheetName);
-      if (!sheet) return;
+      const sheet = sheets[sheetName];
+      if (!sheet || sheet.getLastRow() <= 1) return;
       
-      const data = sheet.getDataRange().getValues();
+      const data = sheet.getRange(2, 1, sheet.getLastRow() - 1, sheet.getLastColumn()).getValues();
       
-      // 2행부터 데이터 시작 (1행은 헤더)
-      for (let i = 1; i < data.length; i++) {
+      for (let i = 0; i < data.length; i++) {
         const row = data[i];
         if (!row[0] || row[0].toString().trim() === '') continue;
         
-        const pageData = _rowToObject(pageType, row, i + 1);
+        const pageData = _rowToObject(pageType, row, i + 2);
         pages.push(pageData);
       }
+    });
+
+    // PageOrder 기준으로 정렬
+    pages.sort((a, b) => {
+      const orderA = pageOrderMap[a.id] !== undefined ? pageOrderMap[a.id] : 999;
+      const orderB = pageOrderMap[b.id] !== undefined ? pageOrderMap[b.id] : 999;
+      return orderA - orderB;
     });
 
     return ContentService.createTextOutput(JSON.stringify({
@@ -74,7 +96,14 @@ function doGet(e) {
 
 function doPost(e) {
   try {
-    const params = JSON.parse(e.postData.contents);
+    // 요청 파싱
+    let params;
+    if (e.postData && e.postData.contents) {
+      params = JSON.parse(e.postData.contents);
+    } else {
+      throw new Error('No POST data received');
+    }
+    
     const { action, pageType, rowIndex, data } = params;
     const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
 
@@ -90,6 +119,61 @@ function doPost(e) {
       return ContentService.createTextOutput(JSON.stringify({
         status: 'success',
         message: 'Metadata updated'
+      }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+
+    // ===== SYNC ALL (전체 동기화) =====
+    if (action === 'syncAll') {
+      const allPages = data.pages || [];
+      const orderEntries = [];
+
+      // 각 시트의 기존 데이터 삭제 후 새로 작성
+      Object.entries(PAGE_TYPE_SHEETS).forEach(([pType, sName]) => {
+        const s = ss.getSheetByName(sName);
+        if (!s) return;
+        if (s.getLastRow() > 1) {
+          s.deleteRows(2, s.getLastRow() - 1);
+        }
+      });
+
+      // 페이지 데이터 작성 + 순서 기록
+      allPages.forEach((page, idx) => {
+        const pType = page.type;
+        const sName = PAGE_TYPE_SHEETS[pType];
+        if (!sName) return;
+        const s = ss.getSheetByName(sName);
+        if (!s) return;
+        const rowValues = _objectToRow(pType, page);
+        s.appendRow(rowValues);
+        orderEntries.push([page.id, pType, idx]);
+      });
+
+      // PageOrder 시트 갱신
+      const pageOrderSheet = ss.getSheetByName('PageOrder');
+      if (pageOrderSheet) {
+        if (pageOrderSheet.getLastRow() > 1) {
+          pageOrderSheet.deleteRows(2, pageOrderSheet.getLastRow() - 1);
+        }
+        if (orderEntries.length > 0) {
+          pageOrderSheet.getRange(2, 1, orderEntries.length, 3).setValues(orderEntries);
+        }
+      }
+
+      // Metadata 저장
+      if (data.metadata) {
+        const metadataSheet = ss.getSheetByName(SHEET_NAMES.metadata);
+        metadataSheet.getRange(2, 1, 1, 4).setValues([[
+          data.metadata.title || '',
+          data.metadata.theme || 'classic',
+          data.metadata.standard || 'A5',
+          data.metadata.bindingMargin || 5
+        ]]);
+      }
+
+      return ContentService.createTextOutput(JSON.stringify({
+        status: 'success',
+        message: 'All pages synced'
       }))
         .setMimeType(ContentService.MimeType.JSON);
     }
@@ -127,6 +211,15 @@ function doPost(e) {
     if (action === 'save' && data) {
       const rowValues = _objectToRow(pageType, data);
       sheet.appendRow(rowValues);
+      
+      // PageOrder 시트에도 새 페이지 추가
+      const pageOrderSheet = ss.getSheetByName('PageOrder');
+      if (pageOrderSheet) {
+        const lastOrder = pageOrderSheet.getLastRow() - 1; // 헤더 제외
+        const maxOrder = Math.max(0, lastOrder);
+        pageOrderSheet.appendRow([data.id, pageType, maxOrder]);
+      }
+      
       return ContentService.createTextOutput(JSON.stringify({
         status: 'success',
         message: 'Page created',
@@ -150,18 +243,18 @@ function doPost(e) {
 
 function _rowToObject(pageType, row, rowIndex) {
   const obj = {
-    id: `row-${rowIndex}`,
+    id: `${pageType}-row-${rowIndex}`,
     type: pageType,
-    title: row[1] || '',
-    content: ''
   };
 
   switch (pageType) {
     case 'cover':
+      obj.title = row[1] || '';
       obj.subtitle = row[2] || '';
       obj.author = row[3] || '';
       break;
     case 'toc':
+      obj.title = row[1] || '';
       try {
         obj.tocEntries = row[2] ? JSON.parse(row[2]) : [];
       } catch {
@@ -174,6 +267,7 @@ function _rowToObject(pageType, row, rowIndex) {
       obj.content = row[3] || '';
       break;
     case 'sequence':
+      obj.title = row[1] || '';
       obj.content = row[2] || '';
       try {
         obj.items = row[3] ? JSON.parse(row[3]) : [];
@@ -182,7 +276,12 @@ function _rowToObject(pageType, row, rowIndex) {
       }
       break;
     case 'body':
+      obj.content = row[1] || '';
+      break;
     case 'header-body':
+      obj.title = row[1] || '';
+      obj.content = row[2] || '';
+      break;
     case 'quote':
       obj.title = row[1] || '';
       obj.content = row[2] || '';
@@ -193,30 +292,50 @@ function _rowToObject(pageType, row, rowIndex) {
 }
 
 function _objectToRow(pageType, obj) {
-  const row = [obj.id || '', obj.title || ''];
-
   switch (pageType) {
     case 'cover':
-      row.push(obj.subtitle || '');
-      row.push(obj.author || '');
-      break;
+      return [
+        obj.id || '',
+        obj.title || '',
+        obj.subtitle || '',
+        obj.author || ''
+      ];
     case 'toc':
-      row.push(obj.tocEntries ? JSON.stringify(obj.tocEntries) : '[]');
-      break;
+      return [
+        obj.id || '',
+        obj.title || '',
+        obj.tocEntries ? JSON.stringify(obj.tocEntries) : '[]'
+      ];
     case 'chapter':
-      row.push(obj.chapterSubtitle || '');
-      row.push(obj.content || '');
-      break;
+      return [
+        obj.id || '',
+        obj.chapterTitle || '',
+        obj.chapterSubtitle || '',
+        obj.content || ''
+      ];
     case 'sequence':
-      row.push(obj.content || '');
-      row.push(obj.items ? JSON.stringify(obj.items) : '[]');
-      break;
+      return [
+        obj.id || '',
+        obj.title || '',
+        obj.content || '',
+        obj.items ? JSON.stringify(obj.items) : '[]'
+      ];
     case 'body':
+      return [
+        obj.id || '',
+        obj.content || ''
+      ];
     case 'header-body':
+      return [
+        obj.id || '',
+        obj.title || '',
+        obj.content || ''
+      ];
     case 'quote':
-      row.push(obj.content || '');
-      break;
+      return [
+        obj.id || '',
+        obj.title || '',
+        obj.content || ''
+      ];
   }
-
-  return row;
 }

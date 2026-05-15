@@ -51,3 +51,78 @@
   }
 }
 
+/**
+ * Print Styles
+ * 프린트 미리보기 및 인쇄 시 스타일
+ * PRINT_BINDING_SPECS 기반:
+ * - Bleed: 3mm (재단 여유)
+ * - Safe Margin: 10mm (콘텐츠 안전 영역)
+ * - Crop Mark: A5 경계선 (마젠타)
+ */
+@media print {
+  /* 페이지 레이아웃 */
+  html, body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    background: white;
+  }
+
+  /* UI 요소 모두 숨김 */
+  header,
+  aside,
+  [class*="sidebar"],
+  [class*="panel"],
+  .floating-controls,
+  button,
+  .sync-status {
+    display: none !important;
+  }
+
+  /* 메인 콘텐츠 영역 */
+  main {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 0 !important;
+    overflow: visible !important;
+    background: white;
+    padding: 0 !important;
+    margin: 0;
+    width: 100%;
+  }
+
+  /* 페이지 컨테이너 - 각 페이지가 개별 인쇄 페이지가 되도록 */
+  main > div {
+    page-break-after: always;
+  }
+
+  main > div:last-child {
+    page-break-after: avoid;
+  }
+
+  /* 애니메이션 및 전환 제거 */
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  /* 그림자 제거 */
+  * {
+    box-shadow: none !important;
+  }
+
+  /* SVG 재단선 (Crop Mark) 색상 보존 */
+  svg,
+  svg line,
+  svg rect {
+    print-color-adjust: exact !important;
+    -webkit-print-color-adjust: exact !important;
+  }
+
+  /* 테두리 스타일 조정 */
+  [class*="border"] {
+    border-color: #e5e5e5 !important;
+  }
+}
+
