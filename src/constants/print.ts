@@ -46,8 +46,8 @@ export const PRINT_BINDING_SPECS = {
   bleed: 3, // mm
 
   /**
-   * CROP MARK (재단선): A5 경계선 표시
-   * 인쇄소에서 정확한 재단을 위한 가이드 라인
+   * CROP MARK (재단선): 세이프 마진 기준으로 그려지는 가이드 라인
+   * 세이프 마진 경계를 표시하여 콘텐츠가 안전 영역 안에 있음을 시각화
    */
   cropMark: {
     strokeWidth: 1.5, // px (SVG stroke width)
@@ -57,6 +57,7 @@ export const PRINT_BINDING_SPECS = {
   /**
    * SAFE ZONE (안전 영역): 콘텐츠 최소 여백
    * 콘텐츠가 이 영역 안에 있어야 출혈 또는 재단 위험 없음
+   * 크롭마크는 이 영역을 기준으로 그려짐
    */
-  safeMargin: 0, // mm
+  safeMargin: 5, // mm
 } as const;

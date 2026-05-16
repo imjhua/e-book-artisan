@@ -56,6 +56,10 @@
   --color-line: #D1CEC8;
   --color-canvas: #FFFFFF;
   --color-accent: #1A1A1A;
+  --font-sans: "Inter", "Gothic A1", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Nanum Myeongjo", "Cormorant Garamond", serif;
+  --font-display: "Playfair Display", serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
 [data-print-preview="true"] * {
@@ -63,6 +67,9 @@
   transition: none !important;
   box-shadow: none !important;
   opacity: 1 !important;
+  -webkit-font-smoothing: antialiased !important;
+  -moz-osx-font-smoothing: grayscale !important;
+  text-rendering: geometricPrecision !important;
 }
 
 /* 모든 색상을 불투명한 값으로 강제 */
@@ -77,7 +84,10 @@
 /* Tailwind 색상 클래스 무시하고 CSS 변수 사용 */
 [data-print-preview="true"] [class*="text-accent"] {
   color: var(--color-accent) !important;
-  opacity: 1 !important;
+}
+
+[data-print-preview="true"] [class*="text-accent/40"] {
+  opacity: 0.4 !important;
 }
 
 [data-print-preview="true"] [class*="text-ink"] {

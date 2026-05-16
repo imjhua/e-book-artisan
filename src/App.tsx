@@ -403,23 +403,28 @@ export default function App() {
 
         <div className="flex-1 flex items-center justify-center p-16 overflow-auto relative">
           {isPrintMode ? (
-            // 프린트 모드: 모든 페이지를 연속으로 렌더링
+            // 프린트 모드: 2쪽씩 페어로 렌더링 (PrintComponent 사용)
             <div className="w-full flex flex-col gap-0">
-              {project.pages.map((page, idx) => (
-                <div key={page.id} className="flex w-full" style={{ pageBreakAfter: 'always' }}>
-                  <SinglePage 
-                    page={page} 
-                    index={idx}
-                    isLeft={idx % 2 === 0}
-                    width={previewWidth}
-                    height={previewHeight}
-                    theme={project.theme}
-                    standard={project.standard}
-                    chapterTitle={getChapterTitle(idx)}
-                    spreadMode={spreadMode}
-                  />
-                </div>
-              ))}
+              {Array.from({ length: Math.ceil(project.pages.length / 2) }).map((_, pairIdx) => {
+                const leftIdx = pairIdx * 2;
+                const rightIdx = leftIdx + 1;
+                
+                return (
+                  <div key={`print-pair-${pairIdx}`} style={{ pageBreakAfter: 'always' }}>
+                    <PrintComponent 
+                      leftPage={project.pages[leftIdx]}
+                      rightPage={rightIdx < project.pages.length ? project.pages[rightIdx] : undefined}
+                      leftIndex={leftIdx}
+                      rightIndex={rightIdx}
+                      width={previewWidth}
+                      height={previewHeight}
+                      theme={project.theme}
+                      standard={project.standard}
+                      chapterTitle={getChapterTitle(leftIdx)}
+                    />
+                  </div>
+                );
+              })}
             </div>
           ) : (
             // 일반 모드: 현재 페이지/스프레드만 표시
@@ -433,57 +438,34 @@ export default function App() {
                 style={{ transformOrigin: 'center center' }}
                 className="flex items-center gap-0"
               >
-                {/* If spread mode is on, we figure out which pages to show */}
+                {/* 2쪽/1쪽 모드 분기 */}
                 {spreadMode ? (
-                  <div 
-                    className="flex items-center gap-0 bg-line/10 border border-line/20 rounded shadow-2xl overflow-hidden"
-                    style={{ width: previewWidth * 2 }}
-                  >
-                    {(() => {
-                      const leftIdx = Math.floor(currentIndex / 2) * 2;
-                      const rightIdx = leftIdx + 1;
-                      
-                      return (
-                        <>
-                          <SinglePage 
-                            page={project.pages[leftIdx]} 
-                            index={leftIdx}
-                            isLeft={true}
-                            width={previewWidth}
-                            height={previewHeight}
-                            theme={project.theme}
-                            standard={project.standard}
-                            chapterTitle={getChapterTitle(leftIdx)}
-                            spreadMode={spreadMode}
-                          />
-                          {rightIdx < project.pages.length ? (
-                            <SinglePage 
-                              page={project.pages[rightIdx]} 
-                              index={rightIdx}
-                              isLeft={false}
-                              width={previewWidth}
-                              height={previewHeight}
-                              theme={project.theme}
-                              standard={project.standard}
-                              chapterTitle={getChapterTitle(rightIdx)}
-                              spreadMode={spreadMode}
-                            />
-                          ) : null}
-                        </>
-                      );
-                    })()}
-                  </div>
+                  (() => {
+                    const leftIdx = Math.floor(currentIndex / 2) * 2;
+                    const rightIdx = leftIdx + 1;
+                    return (
+                      <DoublePageComponent 
+                        leftPage={project.pages[leftIdx]} 
+                        rightPage={rightIdx < project.pages.length ? project.pages[rightIdx] : undefined}
+                        leftIndex={leftIdx}
+                        rightIndex={rightIdx}
+                        width={previewWidth}
+                        height={previewHeight}
+                        theme={project.theme}
+                        standard={project.standard}
+                        chapterTitle={getChapterTitle(leftIdx)}
+                      />
+                    );
+                  })()
                 ) : (
-                  <SinglePage 
+                  <SinglePageComponent 
                     page={currentPage} 
                     index={currentIndex}
-                    isLeft={isLeftPage}
                     width={previewWidth}
                     height={previewHeight}
                     theme={project.theme}
                     standard={project.standard}
                     chapterTitle={getChapterTitle(currentIndex)}
-                    spreadMode={spreadMode}
                   />
                 )}
               </motion.div>
@@ -766,100 +748,61 @@ export default function App() {
   );
 }
 
-function SinglePage({ 
+/**
+ * SinglePageComponent - 1쪽 보기 모드
+ * 레이아웃: 스파인 공간 제외
+ * 페이지 너비: 100 - 5(spine) = 95px
+ * 최종 너비: 95 - 5(safe-left) - 5(safe-right) = 85
+ */
+function SinglePageComponent({ 
   page, 
   index, 
-  isLeft, 
   width, 
   height, 
   theme,
   standard,
-  chapterTitle,
-  spreadMode
+  chapterTitle
 }: { 
   page: IPageData; 
   index: number; 
-  isLeft: boolean; 
   width: number; 
   height: number; 
   theme: BookTheme;
   standard: BookStandard;
   chapterTitle: string;
-  spreadMode: boolean;
 }) {
   const sizes = getContentSizes(standard);
-  // 크기 계산
-  const bleedPx = PRINT_BINDING_SPECS.bleed * MM_TO_PX;
-  const safeMarginPx = PRINT_BINDING_SPECS.safeMargin * MM_TO_PX;
   const spineMarginPx = PRINT_BINDING_SPECS.spine * MM_TO_PX;
+  const safeMarginPx = PRINT_BINDING_SPECS.safeMargin * MM_TO_PX;
   
-  // 전체 크기 = A5 + BLEED (출혈선 여유)
-  const totalWidth = width + bleedPx * 2;
-  const totalHeight = height + bleedPx * 2;
-  
-  // 외부 패딩: BLEED만 적용 (스파인은 내부에서 처리)
-  const paddingTop = `${bleedPx}px`;
-  const paddingBottom = `${bleedPx}px`;
-  const paddingLeft = `${bleedPx}px`;
-  const paddingRight = `${bleedPx}px`;
+  // 1쪽 모드에서는 스파인 공간을 제외한 너비
+  const pageWidth = width - (spineMarginPx / 2);
  
   return (
     <div 
       style={{ 
-        width: totalWidth,
-        height: totalHeight,
-        paddingLeft,
-        paddingRight,
-        paddingTop,
-        paddingBottom,
+        width: pageWidth,
+        height: height,
+        maxHeight: height,
+        overflow: 'hidden',
       }}
-      className={`bg-paper relative flex flex-col group overflow-hidden shrink-0 theme-${theme} print:shadow-none print:border-0 print:overflow-visible`}
+      className={`bg-paper relative flex flex-col group overflow-hidden shrink-0 theme-${theme} print:shadow-none print:border-0`}
     >
       {/* 스크린에서만 보이는 그림자와 테두리 */}
       <div className="absolute inset-0 pointer-events-none shadow-[0_35px_60px_-15px_rgba(0,0,0,0.1)] border border-line/40 print:shadow-none print:border-0" />
       
-      {/* Crop Marks - 재단선 (프린트할 때만 표시) */}
-      <div className="print:block hidden absolute pointer-events-none z-10 w-full h-full">
-        <CropMark contentWidth={width} contentHeight={height} bleedPx={bleedPx} />
-      </div>
-      
-      {/* 콘텐츠 컨테이너: Spine + Content를 수평으로 배치 */}
-      <div className="flex-1 relative flex flex-col h-full">
-        {/* Spine 영역과 Content를 flex로 배치 (spread mode에서만 표시) */}
-        <div className={`flex flex-1 ${isLeft ? 'flex-row-reverse' : 'flex-row'}`}>
-          {/* Spine Margin Area - spread mode에서만 표시 */}
-          {spreadMode && (
-            <div 
-              className="flex-shrink-0 pointer-events-none bg-blue-500/5 flex items-center justify-center border-blue-400/20"
-              style={{
-                width: `${spineMarginPx}px`,
-                borderLeft: !isLeft ? `1px dashed rgba(96, 165, 250, 0.2)` : 'none',
-                borderRight: isLeft ? `1px dashed rgba(96, 165, 250, 0.2)` : 'none',
-              }}
-            >
-              <span className={`text-[8px] font-bold tracking-tighter text-blue-400/50 whitespace-nowrap ${isLeft ? 'rotate-90' : '-rotate-90'}`}>
-                SPINE {PRINT_BINDING_SPECS.spine}mm
-              </span>
-            </div>
-          )}
-
-          {/* Content Area */}
-          <div 
-            className="flex-1 relative flex flex-col overflow-hidden"
-            style={{
-              paddingLeft: `${safeMarginPx}px`,
-              paddingRight: `${safeMarginPx}px`,
-              paddingTop: `${safeMarginPx}px`,
-              paddingBottom: `${safeMarginPx}px`,
-            }}
-          >
-            <PageContent page={page} theme={theme} standard={standard} chapterTitle={chapterTitle} />
-          </div>
+      {/* Content Area with SafeMargin (스파인 제외) - 강력한 overflow 처리 */}
+      <div 
+        className="flex-1 relative flex flex-col overflow-hidden h-full w-full"
+        style={{ padding: `${safeMarginPx}px`, minWidth: 0, boxSizing: 'border-box' }}
+      >
+        <div className="flex-1 overflow-hidden w-full h-full" style={{ minWidth: 0 }}>
+          <PageContent page={page} theme={theme} standard={standard} chapterTitle={chapterTitle} />
         </div>
       </div>
  
-      {/* 페이지 번호 - 프린트할 때만 표시 */}
-      <div style={{ fontSize: sizes.pageNumber }} className={`absolute bottom-8 font-mono font-bold text-accent/50 print:text-ink/30 ${isLeft ? 'left-12' : 'right-12'} print:bottom-4`}>
+      {/* 페이지 번호 */}
+      <div style={{ fontSize: sizes.pageNumber }} className="absolute bottom-8 right-12 font-mono font-bold text-accent/50 print:text-ink/30 print:bottom-4">
         {index + 1}
       </div>
     </div>
@@ -867,55 +810,135 @@ function SinglePage({
 }
 
 /**
- * Crop Mark Component - 재단선 (BLEED와 콘텐츠 영역의 경계)
+ * DoublePageComponent - 2쪽 보기 모드
+ * 중앙에 명확한 스파인 divider 배치
+ * 각 페이지: 100px | 중앙 spine: 15px | 각 페이지: 100px
  */
-function CropMark({ contentWidth, contentHeight, bleedPx }: { contentWidth: number; contentHeight: number; bleedPx: number }) {
-  const strokeWidth = PRINT_BINDING_SPECS.cropMark.strokeWidth;
-  const color = PRINT_BINDING_SPECS.cropMark.color;
-  const markLength = 15; // 각도 마크의 길이 (px)
+function DoublePageComponent({ 
+  leftPage,
+  rightPage,
+  leftIndex,
+  rightIndex,
+  width, 
+  height, 
+  theme,
+  standard,
+  chapterTitle
+}: { 
+  leftPage: IPageData | undefined; 
+  rightPage: IPageData | undefined;
+  leftIndex: number;
+  rightIndex: number;
+  width: number; 
+  height: number; 
+  theme: BookTheme;
+  standard: BookStandard;
+  chapterTitle: string;
+}) {
+  const sizes = getContentSizes(standard);
+  const spineMarginPx = PRINT_BINDING_SPECS.spine * MM_TO_PX;
+  const safeMarginPx = PRINT_BINDING_SPECS.safeMargin * MM_TO_PX;
+
+  const PageContent_Wrapper = ({ page, index }: { page: IPageData | undefined; index: number }) => {
+    if (!page) return <div style={{ width: width - (spineMarginPx / 2), height: height }} className="bg-paper/50" />;
+    
+    return (
+      <div 
+        style={{ 
+          width: width - (spineMarginPx / 2),
+          height: height,
+          maxHeight: height,
+          overflow: 'hidden',
+        }}
+        className={`bg-paper relative flex flex-col group overflow-hidden shrink-0 theme-${theme}`}
+      >
+        {/* 스크린에서만 보이는 그림자와 테두리 */}
+        <div className="absolute inset-0 pointer-events-none shadow-[0_35px_60px_-15px_rgba(0,0,0,0.1)] border border-line/40" />
+        
+        {/* Content Area with SafeMargin (spine 제외) - 강력한 overflow 처리 */}
+        <div 
+          className="flex-1 relative flex flex-col overflow-hidden h-full w-full"
+          style={{ padding: `${safeMarginPx}px`, minWidth: 0, boxSizing: 'border-box' }}
+        >
+          <div className="flex-1 overflow-hidden w-full h-full" style={{ minWidth: 0, boxSizing: 'border-box' }}>
+            <PageContent page={page} theme={theme} standard={standard} chapterTitle={chapterTitle} />
+          </div>
+        </div>
+
+        {/* 페이지 번호 */}
+        <div style={{ fontSize: sizes.pageNumber }} className={`absolute bottom-8 font-mono font-bold text-accent/50 ${index % 2 === 0 ? 'left-12' : 'right-12'}`}>
+          {index + 1}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="flex items-stretch gap-0 bg-line/10 border border-line/20 rounded shadow-2xl overflow-hidden" style={{ width: (width - (spineMarginPx / 2)) * 2 + spineMarginPx, height: height }}>
+      {/* 좌측 페이지 */}
+      <PageContent_Wrapper page={leftPage} index={leftIndex} />
+      
+      {/* 중앙 Spine Divider */}
+      <div 
+        className="flex-shrink-0 pointer-events-none h-full"
+        style={{ width: `${spineMarginPx}px` }}
+      >
+        <div className="w-full h-full flex items-center justify-center print:invisible bg-blue-500/5 border-x border-blue-400/20">
+          <span className="text-[8px] font-bold tracking-tighter text-blue-400/50 whitespace-nowrap print:hidden">
+            SPINE
+          </span>
+        </div>
+      </div>
+      
+      {/* 우측 페이지 */}
+      <PageContent_Wrapper page={rightPage} index={rightIndex} />
+    </div>
+  );
+}
+
+/**
+ * PrintComponent - 프린트 모드 (DoublePageComponent를 래핑)
+ * 각 페이지에 Bleed를 추가함
+ */
+function PrintComponent({ 
+  leftPage,
+  rightPage,
+  leftIndex,
+  rightIndex,
+  width, 
+  height, 
+  theme,
+  standard,
+  chapterTitle
+}: { 
+  leftPage: IPageData | undefined; 
+  rightPage: IPageData | undefined;
+  leftIndex: number;
+  rightIndex: number;
+  width: number; 
+  height: number; 
+  theme: BookTheme;
+  standard: BookStandard;
+  chapterTitle: string;
+}) {
+  const bleedPx = PRINT_BINDING_SPECS.bleed * MM_TO_PX;
+  const totalWidth = width + bleedPx * 2;
+  const totalHeight = height + bleedPx * 2;
   
   return (
-    <svg 
-      className="absolute pointer-events-none"
-      style={{
-        left: 0,
-        top: 0,
-        width: contentWidth + bleedPx * 2,
-        height: contentHeight + bleedPx * 2,
-      }}
-      viewBox={`0 0 ${contentWidth + bleedPx * 2} ${contentHeight + bleedPx * 2}`}
-      preserveAspectRatio="none"
-      xmlns="http://www.w3.org/2000/svg"
-    >
-      {/* A5 경계선 - CROP MARK */}
-      <rect 
-        x={bleedPx} 
-        y={bleedPx} 
-        width={contentWidth} 
-        height={contentHeight} 
-        fill="none" 
-        stroke={color} 
-        strokeWidth={strokeWidth}
-        opacity="0.8"
+    <div style={{ padding: `${bleedPx}px`, width: totalWidth * 2, height: totalHeight }}>
+      <DoublePageComponent
+        leftPage={leftPage}
+        rightPage={rightPage}
+        leftIndex={leftIndex}
+        rightIndex={rightIndex}
+        width={width}
+        height={height}
+        theme={theme}
+        standard={standard}
+        chapterTitle={chapterTitle}
       />
-      
-      {/* 모서리 마크 */}
-      {/* 좌상단 */}
-      <line x1={bleedPx - markLength} y1={bleedPx} x2={bleedPx} y2={bleedPx} stroke={color} strokeWidth={strokeWidth} opacity="0.6" />
-      <line x1={bleedPx} y1={bleedPx - markLength} x2={bleedPx} y2={bleedPx} stroke={color} strokeWidth={strokeWidth} opacity="0.6" />
-      
-      {/* 우상단 */}
-      <line x1={bleedPx + contentWidth} y1={bleedPx - markLength} x2={bleedPx + contentWidth} y2={bleedPx} stroke={color} strokeWidth={strokeWidth} opacity="0.6" />
-      <line x1={bleedPx + contentWidth + markLength} y1={bleedPx} x2={bleedPx + contentWidth} y2={bleedPx} stroke={color} strokeWidth={strokeWidth} opacity="0.6" />
-      
-      {/* 좌하단 */}
-      <line x1={bleedPx - markLength} y1={bleedPx + contentHeight} x2={bleedPx} y2={bleedPx + contentHeight} stroke={color} strokeWidth={strokeWidth} opacity="0.6" />
-      <line x1={bleedPx} y1={bleedPx + contentHeight + markLength} x2={bleedPx} y2={bleedPx + contentHeight} stroke={color} strokeWidth={strokeWidth} opacity="0.6" />
-      
-      {/* 우하단 */}
-      <line x1={bleedPx + contentWidth + markLength} y1={bleedPx + contentHeight} x2={bleedPx + contentWidth} y2={bleedPx + contentHeight} stroke={color} strokeWidth={strokeWidth} opacity="0.6" />
-      <line x1={bleedPx + contentWidth} y1={bleedPx + contentHeight + markLength} x2={bleedPx + contentWidth} y2={bleedPx + contentHeight} stroke={color} strokeWidth={strokeWidth} opacity="0.6" />
-    </svg>
+    </div>
   );
 }
 
@@ -931,14 +954,14 @@ function PageContent({ page, theme, standard, chapterTitle }: { page: IPageData,
     // Sequence와 Header-Body는 제목만 표시 (chapterTitle 미표시)
     if (page.type === 'sequence' || page.type === 'header-body') {
       return (
-        <div style={{ fontSize: sizes.runningHeader }} className="flex items-center gap-4 py-1.5 border-b border-line/20 mb-10 uppercase tracking-[0.15em] font-bold text-accent/50">
+        <div style={{ fontSize: sizes.runningHeader }} className="flex items-center gap-4 py-1.5 border-b border-line/20 mb-10 uppercase tracking-[0.15em] font-sans font-bold text-accent/50">
            <span className="truncate max-w-[180px] text-left">{page.title || ''}</span>
         </div>
       );
     }
     
     return (
-      <div style={{ fontSize: sizes.runningHeader }} className="flex items-center gap-4 py-1.5 border-b border-line/20 mb-10 uppercase tracking-[0.15em] font-bold text-accent/50">
+      <div style={{ fontSize: sizes.runningHeader }} className="flex items-center gap-4 py-1.5 border-b border-line/20 mb-10 uppercase tracking-[0.15em] font-sans font-bold text-accent/50">
          <span className="truncate max-w-[180px] text-left">{chapterTitle || ''}</span>
          <span className="w-[1px] h-2 bg-line/20" />
          <span className="truncate max-w-[180px] text-left">{page.title || ''}</span>
@@ -949,9 +972,9 @@ function PageContent({ page, theme, standard, chapterTitle }: { page: IPageData,
   switch (page.type) {
     case 'sequence':
       return (
-        <div style={{ padding: `${sizes.padSm}px` }} className="flex-1 flex flex-col h-full">
+        <div style={{ padding: `${sizes.padSm}px`, maxHeight: '100%' }} className="flex-1 flex flex-col h-full overflow-hidden">
           <RunningHeader />
-          <div className="space-y-4 flex-1">
+          <div className="space-y-4 flex-1 overflow-hidden">
              {page.content?.split('\n').filter(l => l.trim()).map((line, i) => {
                const parts = line.trim().split(' ');
                const pose = parts.length > 1 ? parts.pop() : '';
@@ -960,13 +983,13 @@ function PageContent({ page, theme, standard, chapterTitle }: { page: IPageData,
                return (
                  <div key={i} className="flex items-center gap-6 group">
                    <div className="flex-1 border-b border-line/5 flex items-center">
-                     <p style={{ fontSize: sizes.sequenceText }} className={`leading-relaxed ${bodyFont} ${theme === 'zen' ? 'text-accent' : 'text-ink/80'}`}>
+                     <p style={{ fontSize: sizes.sequenceText, wordBreak: 'break-word' }} className={`leading-relaxed overflow-hidden ${bodyFont} ${theme === 'zen' ? 'text-accent' : 'text-ink/80'}`}>
                        {lyric}
                      </p>
                      <div className="flex-1 ml-4" />
                    </div>
                    <div className="w-32 text-right flex items-center justify-end">
-                     <p style={{ fontSize: sizes.sequencePose }} className={`font-bold uppercase tracking-widest ${titleFont} text-ink/90`}>
+                     <p style={{ fontSize: sizes.sequencePose, wordBreak: 'break-word' }} className={`font-bold uppercase tracking-widest overflow-hidden ${titleFont} text-ink/90`}>
                        {pose}
                      </p>
                    </div>
@@ -978,18 +1001,18 @@ function PageContent({ page, theme, standard, chapterTitle }: { page: IPageData,
       );
     case 'cover':
       return (
-        <div style={{ padding: `${sizes.padLg}px ${sizes.padSm}px` }} className="flex-1 flex flex-col items-center justify-center text-center relative overflow-hidden h-full">
+        <div style={{ padding: `${sizes.padLg}px ${sizes.padSm}px`, maxHeight: '100%' }} data-page-content className="flex-1 flex flex-col items-center justify-center text-center relative overflow-hidden h-full">
            <div className={`w-16 h-[2px] bg-line/20 mb-12 ${theme === 'modern' ? 'bg-ink w-24 h-[4px]' : ''}`} />
-           <h1 style={{ fontSize: theme === 'modern' ? sizes.coverTitleLarge : sizes.coverTitle }} className={`font-bold tracking-tight leading-[1.1] mb-6 whitespace-pre-wrap ${titleFont} ${theme === 'modern' ? 'uppercase' : 'text-ink'}`}>
+           <h1 style={{ fontSize: theme === 'modern' ? sizes.coverTitleLarge : sizes.coverTitle, wordBreak: 'break-word' }} className={`font-bold tracking-tight leading-[1.1] mb-6 whitespace-pre-wrap overflow-hidden ${titleFont} ${theme === 'modern' ? 'uppercase' : 'text-ink'}`}>
              {page.title}
            </h1>
            <div className="w-8 h-[1px] bg-line/30 mb-6" />
-           <p style={{ fontSize: sizes.coverSubtitle }} className={`tracking-[0.3em] uppercase mb-20 max-w-[80%] mx-auto leading-relaxed ${theme === 'modern' ? 'font-sans font-black text-ink bg-ink text-white px-4 py-1' : 'font-sans text-accent'}`}>
+           <p style={{ fontSize: sizes.coverSubtitle, wordBreak: 'break-word' }} className={`tracking-[0.3em] uppercase mb-20 max-w-[80%] mx-auto leading-relaxed font-sans overflow-hidden ${theme === 'modern' ? 'font-black text-ink bg-ink text-white px-4 py-1' : 'font-normal text-accent'}`}>
              {page.subtitle}
            </p>
            <div className="mt-auto pt-12 flex flex-col items-center">
-             <span style={{ fontSize: sizes.authorLabel }} className="uppercase tracking-[0.4em] text-accent/40 mb-3 font-bold">Author</span>
-             <p style={{ fontSize: sizes.authorName }} className={`tracking-[0.05em] ${theme === 'modern' ? 'font-sans font-bold uppercase underline underline-offset-4' : 'font-serif text-ink'}`}>
+             <span style={{ fontSize: sizes.authorLabel }} className="uppercase tracking-[0.4em] text-accent/40 mb-3 font-sans font-bold">Author</span>
+             <p style={{ fontSize: sizes.authorName }} className={`tracking-[0.05em] font-sans font-bold ${theme === 'modern' ? 'uppercase underline underline-offset-4' : ''}`}>
                {page.author}
              </p>
            </div>
@@ -997,8 +1020,8 @@ function PageContent({ page, theme, standard, chapterTitle }: { page: IPageData,
       );
     case 'toc':
       return (
-        <div style={{ padding: `${sizes.padLg}px ${sizes.padMd}px` }} className="flex-1 flex flex-col items-center h-full">
-          <div className="w-full max-w-[320px]">
+        <div style={{ padding: `${sizes.padLg}px ${sizes.padMd}px`, maxHeight: '100%' }} data-page-content className="flex-1 flex flex-col items-center h-full overflow-hidden">
+          <div className="w-full max-w-[320px] overflow-hidden flex-1 flex flex-col">
             <div className="flex flex-col items-center mb-16">
               <span style={{ fontSize: sizes.tocLabel }} className="uppercase tracking-[0.5em] text-accent/40 font-bold mb-3">Index</span>
               <h2 style={{ fontSize: sizes.tocTitle }} className={`font-bold text-ink ${titleFont}`}>목차</h2>
@@ -1009,11 +1032,11 @@ function PageContent({ page, theme, standard, chapterTitle }: { page: IPageData,
                 page.tocEntries.map((entry, i) => (
                   <div key={i} className="flex flex-col gap-1 group cursor-default">
                     <div className="flex items-baseline justify-between mb-1">
-                      <span style={{ fontSize: sizes.tocChapter }} className="font-mono text-accent/60 tracking-widest uppercase">{entry.chapter}</span>
-                      <span style={{ fontSize: sizes.tocPageNum }} className="font-mono text-accent/30 tracking-widest uppercase">P.{entry.pageNumber || String(i + 1).padStart(2, '0')}</span>
+                      <span style={{ fontSize: sizes.tocChapter }} className="font-mono font-normal text-accent/60 tracking-widest uppercase">{entry.chapter}</span>
+                      <span style={{ fontSize: sizes.tocPageNum }} className="font-mono font-normal text-accent/30 tracking-widest uppercase">P.{entry.pageNumber || String(i + 1).padStart(2, '0')}</span>
                     </div>
                     <div className="flex items-baseline gap-3 group">
-                      <span style={{ fontSize: sizes.tocEntry }} className={`font-medium group-hover:text-ink transition-colors uppercase tracking-[0.12em] text-ink/90 ${bodyFont}`}>{entry.title}</span>
+                    <span style={{ fontSize: sizes.tocEntry, wordBreak: 'break-word' }} className={`font-medium group-hover:text-ink transition-colors uppercase tracking-[0.12em] text-ink/90 overflow-hidden ${bodyFont}`}>{entry.title}</span>
                       <div className="flex-1 border-b border-line/10" />
                     </div>
                   </div>
@@ -1025,12 +1048,12 @@ function PageContent({ page, theme, standard, chapterTitle }: { page: IPageData,
       );
     case 'chapter':
       return (
-        <div style={{ padding: sizes.padMd }} className="flex-1 flex flex-col items-center justify-center text-center h-full relative">
+        <div style={{ padding: sizes.padMd, maxHeight: '100%' }} data-page-content className="flex-1 flex flex-col items-center justify-center text-center h-full overflow-hidden relative">
            <div className="mb-12">
-             <span style={{ fontSize: sizes.chapterLabel }} className="font-mono text-accent/50 tracking-[0.5em] uppercase block mb-6">Part</span>
-             <h2 style={{ fontSize: sizes.chapterTitle }} className={`font-bold mb-8 text-ink ${titleFont}`}>{page.chapterTitle}</h2>
+             <span style={{ fontSize: sizes.chapterLabel }} className="font-mono font-normal text-accent/50 tracking-[0.5em] uppercase block mb-6">Part</span>
+             <h2 style={{ fontSize: sizes.chapterTitle, wordBreak: 'break-all' }} className={`font-bold mb-8 text-ink overflow-hidden ${titleFont}`}>{page.chapterTitle}</h2>
            </div>
-           <h3 style={{ fontSize: sizes.chapterSubtitle }} className={`italic text-accent tracking-tighter leading-normal max-w-[80%] mx-auto ${bodyFont}`}>
+           <h3 style={{ fontSize: sizes.chapterSubtitle, wordBreak: 'break-all' }} className={`italic font-normal text-accent tracking-tighter leading-normal max-w-[80%] mx-auto ${bodyFont}`}>
             {page.chapterSubtitle}
            </h3>
            {theme === 'modern' && (
@@ -1040,18 +1063,18 @@ function PageContent({ page, theme, standard, chapterTitle }: { page: IPageData,
       );
     case 'header-body':
       return (
-        <div style={{ padding: `${sizes.padSm}px` }} className="flex-1 flex flex-col h-full">
+        <div style={{ padding: `${sizes.padSm}px`, maxHeight: '100%' }} data-page-content className="flex-1 flex flex-col h-full overflow-hidden">
           <RunningHeader />
-          <p style={{ fontSize: sizes.bodyText }} className={`leading-relaxed text-ink/80 whitespace-pre-wrap flex-1 ${bodyFont}`}>
+          <p style={{ fontSize: sizes.bodyText, wordBreak: 'break-word' }} className={`leading-relaxed font-normal text-ink/80 whitespace-pre-wrap flex-1 overflow-hidden ${bodyFont}`}>
             {page.content}
           </p>
         </div>
       );
     case 'quote':
       return (
-        <div style={{ padding: `${sizes.padQuoteY}px ${sizes.padMd}px` }} className="flex-1 flex flex-col items-center justify-center text-center h-full">
+        <div style={{ padding: `${sizes.padQuoteY}px ${sizes.padMd}px`, maxHeight: '100%' }} data-page-content className="flex-1 flex flex-col items-center justify-center text-center h-full overflow-hidden">
            <RunningHeader />
-           <div style={{ fontSize: sizes.quoteText }} className={`font-serif italic text-ink/90 leading-[1.6] max-w-[90%] font-light ${titleFont}`}>
+           <div style={{ fontSize: sizes.quoteText, wordBreak: 'break-word' }} className={`font-serif italic font-light text-ink/90 leading-[1.6] max-w-[90%] overflow-hidden ${titleFont}`}>
              "{page.content}"
            </div>
         </div>
@@ -1059,10 +1082,10 @@ function PageContent({ page, theme, standard, chapterTitle }: { page: IPageData,
     case 'body':
     default:
       return (
-        <div style={{ padding: `${sizes.padSm}px` }} className="flex-1 flex flex-col h-full">
+        <div style={{ padding: `${sizes.padSm}px`, maxHeight: '100%' }} data-page-content className="flex-1 flex flex-col h-full overflow-hidden">
            <RunningHeader />
-           <div className="flex-1">
-             <p style={{ fontSize: sizes.bodyText, ['--drop-cap-size' as string]: `${sizes.firstLetter}px` }} className={`leading-relaxed text-ink/80 whitespace-pre-wrap first-letter:float-left first-letter:mr-3 first-letter:font-serif first-letter:text-ink ${bodyFont} drop-cap`}>
+           <div className="flex-1 overflow-hidden">
+           <p style={{ fontSize: sizes.bodyText, ['--drop-cap-size' as string]: `${sizes.firstLetter}px`, wordBreak: 'break-word' }} className={`leading-relaxed font-normal text-ink/80 whitespace-pre-wrap first-letter:float-left first-letter:mr-3 first-letter:font-serif first-letter:text-ink overflow-hidden ${bodyFont} drop-cap`}>
                {page.content}
              </p>
            </div>
