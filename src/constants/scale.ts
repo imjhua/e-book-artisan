@@ -7,7 +7,8 @@ import type { BookStandard } from '../types';
 
 // Visual Scale Factor: mm을 px로 변환하는 계수
 // A5 page (148mm × 210mm) → viewport에 맞춘 스케일
-export const MM_TO_PX = 3.5;
+// 96 DPI 기준: 96px / 25.4mm = 3.7795px/mm (정확한 프린트 치수)
+export const MM_TO_PX = 96 / 25.4;
 
 /**
  * 판형별 콘텐츠 스케일 팩터

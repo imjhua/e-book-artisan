@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { BOOK_STANDARDS, BookStandard, PageData, PageType, PageData as IPageData, BookTheme, BookProject } from './types.ts';
 import { useEbookSheet } from './hooks/useEbookSheet';
-import { GAS_URL, MM_TO_PX, UI_DEFAULTS, PRINT_BINDING_SPECS, getContentSizes, type SyncStatus } from './constants';
+import { GAS_URL, MM_TO_PX, UI_DEFAULTS, PRINT_BINDING_SPECS, AVAILABLE_PAPER_SIZES, getContentSizes, type SyncStatus } from './constants';
 
 export default function App() {
   const { load, savePage, updatePage, deletePage, saveMetadata, syncAll, loading, error } = useEbookSheet(GAS_URL);
@@ -34,7 +34,7 @@ export default function App() {
   const [syncMessage, setSyncMessage] = useState('');
   const [showLeftSidebar, setShowLeftSidebar] = useState(UI_DEFAULTS.showLeftSidebar);
   const [showRightPanel, setShowRightPanel] = useState(UI_DEFAULTS.showRightPanel);
-  const [isPrintMode, setIsPrintMode] = useState(false);
+  const [showGallery, setShowGallery] = useState(UI_DEFAULTS.showPrintPreview);
   const [isSaving, setIsSaving] = useState(false);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
@@ -60,20 +60,6 @@ export default function App() {
     };
     autoLoad();
   }, [load]);
-
-  // 프린트 이벤트 리스너 - 사이드바 복구 보장
-  useEffect(() => {
-    const handleBeforePrint = () => setIsPrintMode(true);
-    const handleAfterPrint = () => setIsPrintMode(false);
-
-    window.addEventListener('beforeprint', handleBeforePrint);
-    window.addEventListener('afterprint', handleAfterPrint);
-
-    return () => {
-      window.removeEventListener('beforeprint', handleBeforePrint);
-      window.removeEventListener('afterprint', handleAfterPrint);
-    };
-  }, []);
 
   // Helper to add a new page
   const addPage = (type: PageType = 'body') => {
@@ -152,10 +138,10 @@ export default function App() {
     }
   };
 
-  // Preview dimensions (use A5 default if standardInfo is null)
-  const defaultStandardInfo = standardInfo || BOOK_STANDARDS['A5'];
-  const previewWidth = defaultStandardInfo.width * MM_TO_PX;
-  const previewHeight = defaultStandardInfo.height * MM_TO_PX;
+  // Preview dimensions - use AVAILABLE_PAPER_SIZES as source of truth
+  const paperSize = AVAILABLE_PAPER_SIZES[project?.standard as keyof typeof AVAILABLE_PAPER_SIZES] || AVAILABLE_PAPER_SIZES['A5'];
+  const previewWidth = paperSize.width * MM_TO_PX;
+  const previewHeight = paperSize.height * MM_TO_PX;
   const marginPx = project?.bindingMargin ? project.bindingMargin * MM_TO_PX : 0;
 
   // New logic: index 0 (p1) is Left, index 1 (p2) is Right.
@@ -172,37 +158,7 @@ export default function App() {
     return '';
   };
 
-  // 프린트 핸들러: 선택한 표준에 맞춰 페이지 크기 동적 설정
-  const handlePrint = () => {
-    if (!project) return;
 
-    // 선택된 표준 정보 가져오기
-    const standard = BOOK_STANDARDS[project.standard];
-    const width = standard.width;
-    const height = standard.height;
-
-    // 기존 프린트 스타일이 있으면 제거
-    const existingStyle = document.getElementById('print-page-size');
-    if (existingStyle) {
-      existingStyle.remove();
-    }
-
-    // @page 크기만 동적 설정 (폰트, 색상 등은 모두 CSS에서 관리)
-    const style = document.createElement('style');
-    style.id = 'print-page-size';
-    style.textContent = `
-      @page {
-        size: ${width}mm ${height}mm;
-        margin: 0;
-      }
-    `;
-    document.head.appendChild(style);
-
-    // 폰트 로딩 완료 후 프린트 대화 열기
-    document.fonts.ready.then(() => {
-      window.print();
-    });
-  };
 
   return (
     <>
@@ -242,7 +198,7 @@ export default function App() {
         </div>
       )}
       {/* Sidebar: Navigation & Controls */}
-      {showLeftSidebar && !isPrintMode && (
+      {showLeftSidebar && (
       <aside className="w-80 bg-white border-r border-line flex flex-col z-10 transition-all duration-300">
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
           <div className="flex items-center justify-between px-2 mb-4">
@@ -318,20 +274,20 @@ export default function App() {
               <span className="text-[10px] uppercase font-bold text-accent tracking-widest">Chapters / Pages</span>
               <span className="text-xs font-mono font-bold text-ink">{project.pages.length}</span>
             </div>
-           <button 
-             onClick={handlePrint}
-             className="w-full bg-ink text-white py-3 rounded-sm flex items-center justify-center gap-3 text-[11px] uppercase tracking-[0.2em] font-bold hover:bg-neutral-800 transition-all shadow-sm"
-             title={`${project.standard} 크기로 프린트 (${standardInfo?.width}mm × ${standardInfo?.height}mm)`}
-           >
-             <Download className="w-3.5 h-3.5" />
-             Print Preview
-           </button>
         </div>
       </aside>
       )}
 
-      {/* Main Preview Area */}
-      <main className="flex-1 relative flex flex-col overflow-hidden bg-canvas" data-print-preview={isPrintMode}>
+      {/* Main Preview Area - Gallery Mode or Normal Mode */}
+      {showGallery ? (
+        <PrintPreviewView 
+          project={project}
+          onClose={() => setShowGallery(false)}
+          zoom={zoom}
+          onZoomChange={setZoom}
+        />
+      ) : (
+      <main className="flex-1 relative flex flex-col overflow-hidden bg-canvas">
         <header className="h-16 border-b border-line bg-white flex items-center justify-between px-8 z-10 shrink-0 gap-4">
           <div className="flex items-center gap-4">
             <button 
@@ -402,33 +358,8 @@ export default function App() {
       </header>
 
         <div className="flex-1 flex items-center justify-center p-16 overflow-auto relative">
-          {isPrintMode ? (
-            // 프린트 모드: 2쪽씩 페어로 렌더링 (PrintComponent 사용)
-            <div className="w-full flex flex-col gap-0">
-              {Array.from({ length: Math.ceil(project.pages.length / 2) }).map((_, pairIdx) => {
-                const leftIdx = pairIdx * 2;
-                const rightIdx = leftIdx + 1;
-                
-                return (
-                  <div key={`print-pair-${pairIdx}`} style={{ pageBreakAfter: 'always' }}>
-                    <PrintComponent 
-                      leftPage={project.pages[leftIdx]}
-                      rightPage={rightIdx < project.pages.length ? project.pages[rightIdx] : undefined}
-                      leftIndex={leftIdx}
-                      rightIndex={rightIdx}
-                      width={previewWidth}
-                      height={previewHeight}
-                      theme={project.theme}
-                      standard={project.standard}
-                      chapterTitle={getChapterTitle(leftIdx)}
-                    />
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            // 일반 모드: 현재 페이지/스프레드만 표시
-            <AnimatePresence mode="wait">
+          {/* 현재 페이지/스프레드 표시 */}
+          <AnimatePresence mode="wait">
               <motion.div 
                 key={spreadMode ? `spread-${currentIndex}-${zoom}` : `${currentPage.id}-${zoom}`}
                 initial={{ opacity: 0, scale: zoom * 0.98 }}
@@ -470,10 +401,8 @@ export default function App() {
                 )}
               </motion.div>
             </AnimatePresence>
-          )}
 
           {/* Floating Zoom Controls */}
-          {!isPrintMode && (
           <div className="absolute bottom-10 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-md border border-line rounded-full px-4 py-2 flex items-center gap-4 shadow-xl z-20 transition-all hover:bg-white">
              <button 
               onClick={() => setZoom(Math.max(UI_DEFAULTS.zoom.min, zoom - UI_DEFAULTS.zoom.step))}
@@ -501,34 +430,45 @@ export default function App() {
                 <Maximize2 className="w-4 h-4" />
              </button>
           </div>
-          )}
         </div>
-      </main>
-
-      {/* Editor Panel (Right Side) */}
-      {showRightPanel && !isPrintMode && (
+      </main>)}
+      {showRightPanel && (
       <aside className="w-80 bg-white border-l border-line p-6 z-10 flex flex-col gap-8 overflow-y-auto">
         <div>
           <h2 className="text-[10px] uppercase tracking-[0.2em] font-bold text-accent mb-6">Document Specs</h2>
           <div className="space-y-6">
             <div className="flex flex-col gap-2">
               <label className="text-[9px] uppercase tracking-widest text-accent font-bold">미리보기 설정</label>
-              <div className="flex bg-canvas/30 p-1 rounded-sm border border-line">
+              <div className="flex bg-canvas/30 p-1 rounded-sm border border-line gap-1">
                 <button 
-                  onClick={() => setSpreadMode(false)}
+                  onClick={() => {
+                    setSpreadMode(false);
+                    setShowGallery(false);
+                  }}
                   className={`flex-1 flex items-center justify-center gap-2 py-2 px-2 rounded-sm text-[10px] uppercase tracking-widest font-bold transition-all ${
-                    !spreadMode ? 'bg-white text-ink shadow-sm' : 'text-accent hover:text-ink'
+                    !spreadMode && !showGallery ? 'bg-white text-ink shadow-sm' : 'text-accent hover:text-ink'
                   }`}
                 >
                   1쪽씩
                 </button>
                 <button 
-                  onClick={() => setSpreadMode(true)}
+                  onClick={() => {
+                    setSpreadMode(true);
+                    setShowGallery(false);
+                  }}
                   className={`flex-1 flex items-center justify-center gap-2 py-2 px-2 rounded-sm text-[10px] uppercase tracking-widest font-bold transition-all ${
-                    spreadMode ? 'bg-white text-ink shadow-sm' : 'text-accent hover:text-ink'
+                    spreadMode && !showGallery ? 'bg-white text-ink shadow-sm' : 'text-accent hover:text-ink'
                   }`}
                 >
                   2쪽씩
+                </button>
+                <button 
+                  onClick={() => setShowGallery(true)}
+                  className={`flex-1 flex items-center justify-center gap-2 py-2 px-2 rounded-sm text-[10px] uppercase tracking-widest font-bold transition-all ${
+                    showGallery ? 'bg-white text-ink shadow-sm' : 'text-accent hover:text-ink'
+                  }`}
+                >
+                  전체보기
                 </button>
               </div>
             </div>
@@ -749,12 +689,320 @@ export default function App() {
 }
 
 /**
+ * PrintPreviewView - 전체보기 (2쪽씩 스프레드)
+ * 실제 프린트 설정을 반영하여 블리드를 포함한 최종 출력물을 미리 확인
+ */
+function PrintPreviewView({ 
+  project, 
+  onClose,
+  zoom,
+  onZoomChange
+}: { 
+  project: BookProject; 
+  onClose: () => void;
+  zoom: number;
+  onZoomChange: (zoom: number) => void;
+}) {
+  const [selectedPaperSize, setSelectedPaperSize] = useState<keyof typeof AVAILABLE_PAPER_SIZES>('A5');
+  const [currentVisibleSheetIdx, setCurrentVisibleSheetIdx] = useState(0);
+  
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            const sheetIdx = parseInt(entry.target.getAttribute('data-sheet-idx') ?? '0');
+            setCurrentVisibleSheetIdx(sheetIdx);
+            break;
+          }
+        }
+      },
+      { threshold: 0.3 }
+    );
+
+    document.querySelectorAll('[data-sheet-idx]').forEach((element) => {
+      observer.observe(element);
+    });
+
+    return () => observer.disconnect();
+  }, []);
+    const standardInfo = BOOK_STANDARDS[project.standard];
+  const paperSize = AVAILABLE_PAPER_SIZES[selectedPaperSize];
+  
+  // === 용지 크기 (mm 단위) ===
+  const singlePageWidthMm = paperSize.width;        // 단일 페이지 너비
+  const singlePageHeightMm = paperSize.height;      // 단일 페이지 높이
+  
+  // === 2쪽 스프레드 크기 (mm 단위) ===
+  const spreadWidthMm = (singlePageWidthMm * 2) + PRINT_BINDING_SPECS.spine;  // 좌우 페이지 + 스파인
+  const spreadHeightMm = singlePageHeightMm;                                   // 높이는 단일 페이지와 동일
+  
+  // === 프린트 크기: 블리드 포함 (mm 단위) ===
+  const printWidthMm = spreadWidthMm + (PRINT_BINDING_SPECS.bleed * 2);       // 2쪽 + 스파인 + 좌우 블리드
+  const printHeightMm = singlePageHeightMm + (PRINT_BINDING_SPECS.bleed * 2); // 높이 + 상하 블리드
+  
+  // === 픽셀 단위 변수 (화면 렌더링용) ===
+  const previewWidth = singlePageWidthMm * MM_TO_PX;              // 단일 페이지 너비 (픽셀)
+  const previewHeight = singlePageHeightMm * MM_TO_PX;            // 단일 페이지 높이 (픽셀)
+  const spineMarginPx = PRINT_BINDING_SPECS.spine * MM_TO_PX;     // 스파인 너비 (픽셀)
+  const bleedPx = PRINT_BINDING_SPECS.bleed * MM_TO_PX;           // 블리드 너비 (픽셀)
+  
+  // === 스프레드 크기 (픽셀 기준) ===
+  const spreadWidthPx = previewWidth * 2 + spineMarginPx;         // 2쪽 너비 + 스파인 (픽셀)
+  const spreadWidthWithBleedPx = spreadWidthPx + (bleedPx * 2);   // 스프레드 너비 + 좌우 블리드 (픽셀)
+  const spreadHeightPx = previewHeight;                            // 스프레드 높이 (픽셀)
+  const spreadHeightWithBleedPx = spreadHeightPx + (bleedPx * 2); // 스프레드 높이 + 상하 블리드 (픽셀)
+
+  // === 용지 크기 변경 시 글로벌 @page 스타일 업데이트 (Cmd+P 프린트도 적용) ===
+  useEffect(() => {
+    // 기존 스타일 제거
+    const existingStyles = document.querySelectorAll('style[data-print-page-style]');
+    existingStyles.forEach(style => style.remove());
+
+    // 새로운 스타일 추가
+    const style = document.createElement('style');
+    style.setAttribute('data-print-page-style', 'true');
+    style.textContent = `
+      @page {
+        size: ${printWidthMm}mm ${printHeightMm}mm;
+        margin: 0;
+        padding: 0;
+      }
+      @media print {
+        html, body {
+          margin: 0;
+          padding: 0;
+          width: 100%;
+          height: 100%;
+        }
+        * {
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+          color-adjust: exact !important;
+        }
+      }
+    `;
+    document.head.appendChild(style);
+
+    return () => {
+      style.remove();
+    };
+  }, [selectedPaperSize, printWidthMm, printHeightMm]);
+
+  const getChapterTitle = (idx: number) => {
+    for (let i = idx; i >= 0; i--) {
+      if (project.pages[i].type === 'chapter' && project.pages[i].chapterTitle) {
+        return project.pages[i].chapterTitle;
+      }
+    }
+    return '';
+  };
+
+  const handlePrintGallery = () => {
+    // @page 스타일은 이미 useEffect에서 글로벌로 설정됨
+    // Cmd+P로 열었을 때도 같은 설정이 적용됨
+    window.print();
+  };
+
+  return (
+    <main className="flex-1 relative flex flex-col overflow-hidden bg-canvas">
+      {/* Print Preview Header */}
+      <header className="border-b border-line bg-white z-10 shrink-0 print:hidden">
+        <div className="px-8 pt-4 pb-4 space-y-3">
+          {/* Header Top */}
+          <div className="flex items-center justify-between">
+            <h2 className="text-[11px] uppercase tracking-[0.2em] font-bold text-ink">
+              전체보기 (총 {Math.ceil(project.pages.length / 2)} 시트)
+            </h2>
+            <div className="flex items-center gap-3">
+              <button 
+                onClick={handlePrintGallery}
+                className="px-4 py-2 bg-ink text-white rounded-sm text-[10px] uppercase tracking-[0.15em] font-bold hover:bg-neutral-800 transition-all flex items-center gap-2 print:hidden"
+              >
+                <Download className="w-3 h-3" />
+                PDF 출력
+              </button>
+              <button 
+                onClick={onClose}
+                className="px-4 py-2 border border-line text-ink rounded-sm text-[10px] uppercase tracking-[0.15em] font-bold hover:bg-canvas transition-all"
+              >
+                닫기
+              </button>
+            </div>
+          </div>
+          
+          {/* Paper Size Selector */}
+          <div className="flex items-center gap-3 border-t border-line pt-3">
+            <label className="text-[10px] uppercase tracking-widest font-bold text-accent">용지 크기:</label>
+            <select 
+              value={selectedPaperSize}
+              onChange={(e) => setSelectedPaperSize(e.target.value as keyof typeof AVAILABLE_PAPER_SIZES)}
+              className="px-3 py-1.5 border border-line rounded-sm text-[10px] font-mono bg-white text-ink hover:border-ink transition-colors cursor-pointer"
+            >
+              {Object.entries(AVAILABLE_PAPER_SIZES).map(([key, value]) => (
+                <option key={key} value={key}>
+                  {value.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          
+          {/* Print Settings Info */}
+          <div className="grid grid-cols-2 gap-4 text-[9px] font-mono text-accent/70 bg-canvas/30 p-3 rounded-sm border border-line">
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-ink">1쪽:</span>
+              <span>{singlePageWidthMm}×{singlePageHeightMm}mm</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-ink">2쪽:</span>
+              <span>{spreadWidthMm}×{singlePageHeightMm}mm</span>
+              <span className="text-[8px] text-accent/50">(스파인 {PRINT_BINDING_SPECS.spine}mm)</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-ink">프린트:</span>
+              <span>{printWidthMm}×{printHeightMm}mm</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-ink">블리드:</span>
+              <span>{PRINT_BINDING_SPECS.bleed}mm</span>
+              <span className="text-[8px] text-accent/50">(상하좌우)</span>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Fixed Sheet Info - Always visible */}
+      <div className="sticky top-0 bg-white border-b border-line z-20 px-8 py-3 print:hidden">
+        <div className="text-left">
+          <span className="text-[9px] font-mono uppercase tracking-widest text-accent font-bold">
+            {`프린트 시트 ${currentVisibleSheetIdx + 1} of ${Math.ceil(project.pages.length / 2)}`}
+          </span>
+          {(() => {
+            const leftIdx = currentVisibleSheetIdx * 2;
+            const rightIdx = leftIdx + 1;
+            return (
+              <span className="text-[8px] text-accent/50 ml-4 font-mono">
+                쪽수 {leftIdx + 1}–{Math.min(rightIdx + 1, project.pages.length)} / {project.pages.length}
+              </span>
+            );
+          })()}
+        </div>
+      </div>
+
+      {/* Print Preview Content */}
+      <div 
+        style={{
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'flex-start',
+          flex: 1,
+          overflow: 'auto',
+          // paddingTop: '24px',
+          // paddingBottom: '120px',
+          background: 'red'
+        }}
+      >
+        <div 
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '48px',
+            transform: `scale(${zoom})`,
+            transformOrigin: 'center top',
+            width: `${spreadWidthWithBleedPx}px`
+          }}
+        >
+        {Array.from({ length: Math.ceil(project.pages.length / 2) }).map((_, pairIdx) => {
+          const leftIdx = pairIdx * 2;
+          const rightIdx = leftIdx + 1;
+          const totalSpreads = Math.ceil(project.pages.length / 2);
+          const printSheetNumber = pairIdx + 1;
+
+          return (
+            <div 
+              key={`spread-${pairIdx}`} 
+              className="flex flex-col gap-4 relative"
+              data-sheet-idx={pairIdx}
+            >
+              {/* Display bleed preview */}
+
+              {/* 블리드를 포함한 프린트 영역 */}
+              <div 
+                style={{ 
+                  width: `${spreadWidthWithBleedPx}px`,
+                  height: `${spreadHeightWithBleedPx}px`,
+                  boxSizing: 'border-box',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: `${bleedPx}px`,
+                  border: `1.5px dashed #FF1493`,
+                  background: '#FFFFFF'
+                }}
+                className="print:bg-transparent"
+              >
+                <DoublePageComponent
+                  leftPage={project.pages[leftIdx]}
+                  rightPage={rightIdx < project.pages.length ? project.pages[rightIdx] : undefined}
+                  leftIndex={leftIdx}
+                  rightIndex={rightIdx}
+                  width={previewWidth}
+                  height={previewHeight}
+                  theme={project.theme}
+                  standard={project.standard}
+                  chapterTitle={getChapterTitle(leftIdx)}
+                />
+              </div>
+
+              {/* Divider */}
+              {pairIdx < totalSpreads - 1 && (
+                <div className="h-[1px] bg-line/20 my-4 print:hidden" />
+              )}
+            </div>
+          );
+        })}
+        </div>
+      </div>
+
+      {/* Zoom Controls */}
+      <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 flex items-center gap-2 px-3 py-2 bg-white border border-line rounded-lg shadow-md print:hidden">
+        <button 
+          onClick={() => onZoomChange(Math.max(0.5, zoom - 0.1))}
+          className="p-1.5 hover:bg-canvas rounded-full transition-colors text-accent hover:text-ink"
+          title="Zoom Out"
+        >
+          <ZoomOut className="w-4 h-4" />
+        </button>
+        <div className="w-12 text-center text-[10px] font-mono font-bold text-accent select-none">
+          {Math.round(zoom * 100)}%
+        </div>
+        <button 
+          onClick={() => onZoomChange(Math.min(2, zoom + 0.1))}
+          className="p-1.5 hover:bg-canvas rounded-full transition-colors text-accent hover:text-ink"
+          title="Zoom In"
+        >
+          <ZoomIn className="w-4 h-4" />
+        </button>
+        <div className="w-[1px] h-4 bg-line mx-1" />
+        <button 
+          onClick={() => onZoomChange(1)}
+          className="p-1.5 hover:bg-canvas rounded-full transition-colors text-accent hover:text-ink"
+          title="Reset Zoom"
+        >
+          <Maximize2 className="w-4 h-4" />
+        </button>
+      </div>
+    </main>
+  );
+}
+
+/**
  * SinglePageComponent - 1쪽 보기 모드
  * 레이아웃: 스파인 공간 제외
  * 페이지 너비: 100 - 5(spine) = 95px
  * 최종 너비: 95 - 5(safe-left) - 5(safe-right) = 85
  */
-function SinglePageComponent({ 
+function SinglePageComponent({
   page, 
   index, 
   width, 
@@ -774,14 +1022,11 @@ function SinglePageComponent({
   const sizes = getContentSizes(standard);
   const spineMarginPx = PRINT_BINDING_SPECS.spine * MM_TO_PX;
   const safeMarginPx = PRINT_BINDING_SPECS.safeMargin * MM_TO_PX;
-  
-  // 1쪽 모드에서는 스파인 공간을 제외한 너비
-  const pageWidth = width - (spineMarginPx / 2);
  
   return (
     <div 
       style={{ 
-        width: pageWidth,
+        width: width,
         height: height,
         maxHeight: height,
         overflow: 'hidden',
@@ -840,27 +1085,26 @@ function DoublePageComponent({
   const safeMarginPx = PRINT_BINDING_SPECS.safeMargin * MM_TO_PX;
 
   const PageContent_Wrapper = ({ page, index }: { page: IPageData | undefined; index: number }) => {
-    if (!page) return <div style={{ width: width - (spineMarginPx / 2), height: height }} className="bg-paper/50" />;
+    if (!page) return <div style={{ width: width, height: height }} className="bg-paper/50" />;
     
     return (
       <div 
         style={{ 
-          width: width - (spineMarginPx / 2),
+          width: width,
           height: height,
           maxHeight: height,
-          overflow: 'hidden',
         }}
-        className={`bg-paper relative flex flex-col group overflow-hidden shrink-0 theme-${theme}`}
+        className={`bg-paper relative flex flex-col group overflow-hidden print:overflow-visible shrink-0 theme-${theme} print:shadow-none print:border-0`}
       >
         {/* 스크린에서만 보이는 그림자와 테두리 */}
-        <div className="absolute inset-0 pointer-events-none shadow-[0_35px_60px_-15px_rgba(0,0,0,0.1)] border border-line/40" />
+        <div className="absolute inset-0 pointer-events-none shadow-[0_35px_60px_-15px_rgba(0,0,0,0.1)] border border-line/40 print:shadow-none print:border-0" />
         
         {/* Content Area with SafeMargin (spine 제외) - 강력한 overflow 처리 */}
         <div 
           className="flex-1 relative flex flex-col overflow-hidden h-full w-full"
           style={{ padding: `${safeMarginPx}px`, minWidth: 0, boxSizing: 'border-box' }}
         >
-          <div className="flex-1 overflow-hidden w-full h-full" style={{ minWidth: 0, boxSizing: 'border-box' }}>
+          <div className="flex-1 overflow-hidden print:overflow-visible w-full h-full" style={{ minWidth: 0, boxSizing: 'border-box' }}>
             <PageContent page={page} theme={theme} standard={standard} chapterTitle={chapterTitle} />
           </div>
         </div>
@@ -874,7 +1118,7 @@ function DoublePageComponent({
   };
 
   return (
-    <div className="flex items-stretch gap-0 bg-line/10 border border-line/20 rounded shadow-2xl overflow-hidden" style={{ width: (width - (spineMarginPx / 2)) * 2 + spineMarginPx, height: height }}>
+    <div className="flex items-stretch gap-0 bg-line/10 border border-line/20 rounded shadow-2xl overflow-hidden print:overflow-visible print:shadow-none print:rounded-none print:bg-white print:border-line" style={{ width: width * 2 + spineMarginPx, height: height }}>
       {/* 좌측 페이지 */}
       <PageContent_Wrapper page={leftPage} index={leftIndex} />
       
@@ -883,7 +1127,7 @@ function DoublePageComponent({
         className="flex-shrink-0 pointer-events-none h-full"
         style={{ width: `${spineMarginPx}px` }}
       >
-        <div className="w-full h-full flex items-center justify-center print:invisible bg-blue-500/5 border-x border-blue-400/20">
+        <div className="w-full h-full flex items-center justify-center bg-blue-500/5 border-x border-blue-400/20 print:bg-white print:border-line">
           <span className="text-[8px] font-bold tracking-tighter text-blue-400/50 whitespace-nowrap print:hidden">
             SPINE
           </span>
@@ -892,52 +1136,6 @@ function DoublePageComponent({
       
       {/* 우측 페이지 */}
       <PageContent_Wrapper page={rightPage} index={rightIndex} />
-    </div>
-  );
-}
-
-/**
- * PrintComponent - 프린트 모드 (DoublePageComponent를 래핑)
- * 각 페이지에 Bleed를 추가함
- */
-function PrintComponent({ 
-  leftPage,
-  rightPage,
-  leftIndex,
-  rightIndex,
-  width, 
-  height, 
-  theme,
-  standard,
-  chapterTitle
-}: { 
-  leftPage: IPageData | undefined; 
-  rightPage: IPageData | undefined;
-  leftIndex: number;
-  rightIndex: number;
-  width: number; 
-  height: number; 
-  theme: BookTheme;
-  standard: BookStandard;
-  chapterTitle: string;
-}) {
-  const bleedPx = PRINT_BINDING_SPECS.bleed * MM_TO_PX;
-  const totalWidth = width + bleedPx * 2;
-  const totalHeight = height + bleedPx * 2;
-  
-  return (
-    <div style={{ padding: `${bleedPx}px`, width: totalWidth * 2, height: totalHeight }}>
-      <DoublePageComponent
-        leftPage={leftPage}
-        rightPage={rightPage}
-        leftIndex={leftIndex}
-        rightIndex={rightIndex}
-        width={width}
-        height={height}
-        theme={theme}
-        standard={standard}
-        chapterTitle={chapterTitle}
-      />
     </div>
   );
 }

@@ -16,11 +16,14 @@ export const UI_DEFAULTS = {
   },
 
   // Sidebar visibility
-  showLeftSidebar: true,
-  showRightPanel: true,
+  showLeftSidebar: false,
+  showRightPanel: false,
 
   // Preview mode
   spreadMode: false, // true = 2쪽씩, false = 1쪽씩
+
+  // Print Preview mode (전체보기)
+  showPrintPreview: true, // true = 전체보기 기본, false = 스프레드 모드 기본
 
   // Current page index
   currentIndex: 0,

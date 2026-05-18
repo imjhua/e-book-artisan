@@ -17,4 +17,4 @@ export { UI_DEFAULTS, SYNC_STATUSES, type SyncStatus } from './ui';
 export { BOOK_MARGINS } from './page';
 
 // Print Configuration
-export { PRINT_SETTINGS, PRINT_BINDING_SPECS } from './print';
+export { PRINT_SETTINGS, PRINT_BINDING_SPECS, AVAILABLE_PAPER_SIZES } from './print';
